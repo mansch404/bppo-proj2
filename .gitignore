@@ -1,4 +1,5 @@
 /data/bpi-chall.xes
+/data/bpi-chall.pkl
 bpi-chall.xes
 __pycache__/
 *.pyc
@@ -7,3 +8,4 @@ __pycache__/
 .vscode/
 .idea/
 .env
+.pytest_cache/

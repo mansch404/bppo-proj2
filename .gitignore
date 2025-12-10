@@ -1,2 +1,9 @@
 /data/bpi-chall.xes
 bpi-chall.xes
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.vscode/
+.idea/
+.env

@@ -17,21 +17,20 @@ class ProcessInstance:
         # Zähler für Aktivitäten (hilfreich für Statistiken oder Debugging)
         self.activity_counts: Dict[str, int] = {}
 
-        # FLAGS für Prozess-Steuerung
-        # 1. Flag für den AND-Join (Parallel Gateway im ersten Teil)
+        # Flag für den AND-Join (Parallel Gateway im ersten Teil)
         self.parallel_path_completed = {
             "A_Concept": False,
             "W_Complete application": False
         }
-        # 2. Flag um zu unterscheiden, ob wir VOR oder NACH dem Angebot sind
+        # Flag um zu unterscheiden, ob wir VOR oder NACH dem Angebot sind
         self.phase_after_offer = False
 
     def update_state(self, completed_activity: str) -> List[str]:
-        # 1. Token entfernen
+        # Token entfernen
         if completed_activity in self.current_activities:
             self.current_activities.remove(completed_activity)
 
-        # 2. Historie und Counter updaten
+        # Historie und Counter updaten
         self.history.append(completed_activity)
         self.activity_counts[completed_activity] = self.activity_counts.get(completed_activity, 0) + 1
 
@@ -54,7 +53,7 @@ class ProcessInstance:
             next_activities = ["W_Handle leads"]
 
         elif completed_activity == "W_Handle leads":
-            # Entscheidung: Loop (Fehler) oder Weiter
+            # Entscheidung:
             if random.random() < 0.3:  # Loop
                 next_activities = ["W_Handle leads"]
             else:
@@ -71,7 +70,6 @@ class ProcessInstance:
 
             if self.phase_after_offer == True:
                 # Fall 2: Wir sind NACH dem Angebot (Sequenz)
-                # Es geht weiter zum Call
                 next_activities = ["W_Call after offers"]
             else:
                 # Fall 1: Wir sind im PARALLELEN Teil (vor dem Angebot)

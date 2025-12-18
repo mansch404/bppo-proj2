@@ -47,7 +47,7 @@ from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional,
 import pandas as pd
 
 try:
-    import pm4py  # optional, for XES import
+    import pm4py
 except Exception:  # pragma: no cover
     pm4py = None
 
@@ -312,9 +312,7 @@ class BranchingBasic:
             return pd.read_csv(path)
         if suffix == ".xes":
             if pm4py is None:
-                raise ImportError(
-                    "pm4py is required to read .xes files, but it is not available."
-                )
+                raise ImportError("Could not read xes file, missing pm4py")
             log = pm4py.read_xes(str(path))
             return pm4py.convert_to_dataframe(log)
         raise ValueError(f"Unsupported event log type: {path.suffix}")

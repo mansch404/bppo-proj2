@@ -8,6 +8,7 @@ import random
 from typing import Set, Dict
 from pm4py.objects.petri_net.obj import PetriNet, Marking
 from .logger import EventLogger
+from simulation.timing.distribution_miner import DistributionMiner
 # from .resource_manager import ResourceManager
 
 
@@ -18,6 +19,7 @@ class SimulationEngine:
         initial_marking: Marking,
         final_marking: Marking,
         event_log_path: str,
+        original_log_path: str = ""
     ):
         """
         Initialize simulation engine with Petri Net
@@ -35,6 +37,12 @@ class SimulationEngine:
         self.event_logger = EventLogger(event_log_path)
         # self.resource_manager = ResourceManager()
         self.case_counter = 0
+        # Initialisiere und trainiere den Miner
+        self.distribution_miner = None
+        if original_log_path:
+            from simulation.timing.distribution_miner import DistributionMiner
+            self.distribution_miner = DistributionMiner(original_log_path)
+            self.distribution_miner.analyze_log()
 
         # Debug info
         print(f"\nSimulation Engine initialized:")
@@ -194,9 +202,12 @@ class SimulationEngine:
 
     def get_processing_time(self, activity: str) -> float:
         """
-        Get processing time for activity
-        Placeholder for Task 1.3 - Will implement distributions and ML models
+        Get processing time for activity based on learned distributions (Task 1.3)
         """
+        if self.distribution_miner:
+            return self.distribution_miner.get_processing_time(activity)
+
+        # Fallback, falls kein Miner da ist
         return 10.0
 
     def run(self, until: float):

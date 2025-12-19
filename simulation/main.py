@@ -11,8 +11,9 @@ def main():
     """Run simulation with Petri Net process model"""
 
     # Load BPMN and convert to Petri Net
-    bpmn_path = "simulation/process_model.bpmn"
+    bpmn_path = "process_model.bpmn"
     bpmn_graph = pm4py.read_bpmn(bpmn_path)
+    path_to_xes = '../data/BPI Challenge 2017.xes'
 
     # Convert BPMN to Petri Net
     net, initial_marking, final_marking = pm4py.convert_to_petri_net(bpmn_graph)
@@ -29,6 +30,7 @@ def main():
         initial_marking=initial_marking,
         final_marking=final_marking,
         event_log_path="simulation_log.csv",
+        original_log_path=path_to_xes
     )
 
     # Spawn process instances

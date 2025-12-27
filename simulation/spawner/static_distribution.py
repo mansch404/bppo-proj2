@@ -1,9 +1,10 @@
 import pandas as pd
 import logging
-import fitter
 import pickle
 import scipy.stats as stats
+
 from simulation.spawner.arrivals_segmentation import tune_sensitivity, extend_pattern, get_timeframe_years
+from utils.helper import delta_timestamps_in_seconds, find_best_fitting_distribution, extract_timestamps_per_case
 from datetime import datetime, timedelta
 
 
@@ -16,11 +17,14 @@ class StaticSpawner:
         self.train_df_clustered = None
 
     def fit(self, event_log, segmentation=False):
-        '''
-        :param event_log: Event log as a pandas DataFrame
-                segmentation: use global segmentation for the event log [bool]
-        :return: None
-        '''
+        """
+        Args:
+            event_log: Event log as a pandas DataFrame
+            segmentation: use global segmentation for the event log [bool]
+        Returns: None
+
+        """
+
         self.segmentation = segmentation
         list_timestamps = extract_timestamps_per_case(event_log)
 
@@ -39,8 +43,8 @@ class StaticSpawner:
             )
             best_dist = []
             for cluster in range(len(self.train_df_clustered['cluster'].unique())):
-                current_deltas_minutes =  delta_timestamps_in_minutes(self.train_df_clustered[self.train_df_clustered['cluster'] == cluster]['date'])
-                current_best_dist = find_best_fitting_distribution(current_deltas_minutes)
+                current_deltas_seconds =  delta_timestamps_in_seconds(self.train_df_clustered[self.train_df_clustered['cluster'] == cluster]['date'])
+                current_best_dist = find_best_fitting_distribution(current_deltas_seconds)
                 best_dist.append(current_best_dist)
 
             for i, best_d in enumerate(best_dist):
@@ -52,8 +56,8 @@ class StaticSpawner:
 
         else:
 
-            deltas_minutes = delta_timestamps_in_minutes(list_timestamps)
-            best_dist = find_best_fitting_distribution(deltas_minutes)
+            deltas_seconds = delta_timestamps_in_seconds(list_timestamps)
+            best_dist = find_best_fitting_distribution(deltas_seconds)
 
             self.best_dist_name = list(best_dist.keys())[0]
             self.best_params.append(best_dist[self.best_dist_name])
@@ -64,28 +68,30 @@ class StaticSpawner:
     def generate_next(self, current_dist: int = 0):
         """
         Compute arrivals based on selected distribution.
+
         Returns: [float] Time of the next arrival in minutes.
         """
         if self.dist_object is None:
             raise ValueError("Model not trained! Use fit() first.")
 
         if self.segmentation:
-            val = self.dist_object[current_dist].rvs(**self.best_params[current_dist])
+            val = self.dist_object[current_dist].rvs(**self.best_params[current_dist]) # Distanz zwischen nächstes Arrival
             return max(0.0, val)
 
         else:
-            val = self.dist_object.rvs(**self.best_params[0])
+            val = self.dist_object.rvs(**self.best_params[0]) # Distanz zwischen nächstes Arrival
             return max(0.0, val)
 
     def generate_arrivals(self, star_date, end_date):
-        '''
+        """
+        Args:
+            star_date: [datetime] the start date of the simulation
+            end_date: [datetime] the end date of the simulation
 
-        :param star_date: [datetime] the start date of the simulation
-        :param end_date: [datetime] the end date of the simulation
-        :return: Generated arrival times as a list of [datetime].
-        '''
+        Returns: Generated arrival times as a list of [datetime].
+        """
 
-        generated_arrivals = [star_date + timedelta(minutes=self.generate_next())]
+        generated_arrivals = [star_date + timedelta(seconds=self.generate_next())] # First arrival
         print("Generating arrivals...")
 
         if self.segmentation:
@@ -99,79 +105,19 @@ class StaticSpawner:
                 star_date = grouped_dates['start_date'][i]
                 end_date = grouped_dates['end_date'][i]
                 while generated_arrivals[-1] < end_date:
-                    generated_arrivals.append(generated_arrivals[-1] + timedelta(minutes=self.generate_next(current_dist=i)))
+                    generated_arrivals.append(generated_arrivals[-1] + timedelta(seconds=self.generate_next(current_dist=i)))
 
             return generated_arrivals
 
-        while generated_arrivals[-1] < end_date:
-            generated_arrivals.append(generated_arrivals[-1] + timedelta(minutes=self.generate_next()))
+        else:
+
+            while generated_arrivals[-1] < end_date:
+                generated_arrivals.append(generated_arrivals[-1] + timedelta(seconds=self.generate_next()))
+
+            return generated_arrivals
 
 
-        return generated_arrivals
-
-# TODO
-# Still missing to implement.
-class BusinessHours:
-    def __init__(self, start_hour, end_hour, sim_start):
-        self.start_hour = start_hour
-        self.end_hour = end_hour
-        self.sim_start = sim_start
-
-    def calculate_delay(self, current_sim_time, raw_generated_delta):
-
-        # Calculate real time
-        current_real_time = self.sim_start + timedelta(minutes=current_sim_time)
-
-        # Calculate tentative arrival
-        tentative_arrival = current_real_time + timedelta(minutes=raw_generated_delta)
-
-        closing_time = current_real_time.replace(hour=self.end_hour, minute=0, second=0, microsecond=0)
-
-        if tentative_arrival > closing_time:
-
-            overflow_time = tentative_arrival - closing_time
-
-def extract_timestamps_per_case(df):
-    '''
-    :param df: event-log as pandas DataFrame
-    :return: list of first timestamp for each case
-    '''
-    df['time:timestamp'] = pd.to_datetime(df['time:timestamp'])
-    arrival_times = []
-    for _, events in df.groupby('case:concept:name'):
-        arrival_times += [events['time:timestamp'].min()]
-
-    arrival_times.sort()
-    return arrival_times
-
-def delta_timestamps_in_minutes(list_of_arrivals):
-
-    df_arrivals = pd.DataFrame()
-    df_arrivals.insert(0, 'time:timestamp', list_of_arrivals)
-    df_arrivals['time:timestamp'] = pd.to_datetime(df_arrivals['time:timestamp'])
-
-    deltas = df_arrivals.diff()
-
-    deltas_in_minutes = deltas['time:timestamp'].dt.total_seconds() / 60.0
-    deltas_in_minutes = deltas_in_minutes.dropna()
-
-    return deltas_in_minutes
-
-def find_best_fitting_distribution(deltas_in_minutes):
-
-    list_of_distibutions = ['gamma',
-                            'lognorm',
-                            'expon',
-                            'norm'
-                            ]
-
-    f = fitter.Fitter(deltas_in_minutes, distributions=list_of_distibutions)
-    f.fit()
-
-    best_dist = f.get_best(method='sumsquare_error')
-
-    return best_dist
-
+''' Segmentation of arrivals '''
 def _setup_clustered_train_dict(train, prediction_start_t, prediction_end_t, verbose=None):
     """
     in:
@@ -286,10 +232,6 @@ if __name__ == '__main__':
     generated_arrivals_without_segmentation = arrival_generator_no_segmentation.generate_arrivals(timestamps_list[0], timestamps_list[-1])
     generated_arrivals_df_without_segmentation = pd.DataFrame()
     generated_arrivals_df_without_segmentation.insert(0, 'time:timestamp', generated_arrivals_without_segmentation)
-
-
-
-
 
     print(generated_arrivals_df_with_segmentation.head(50))
     print(generated_arrivals_df_without_segmentation.head(50))

@@ -11,10 +11,12 @@ from typing import Iterable, Tuple, List
 from datetime import date
 from utils.helper import transform_to_float
 
-'''
+"""
 Acknowledgements:
 This module is part of the repository: https://github.com/konradoezdemir/AT-KDE
-'''
+"""
+
+
 
 def tune_sensitivity(list_of_timestamps, window_size=7, max_clusters=6, sensitivity_range=[0.1,0.6,0.7,0.8,0.9,1.0]):
     """

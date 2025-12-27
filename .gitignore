@@ -1,5 +1,4 @@
 /data/bpi-chall.xes
-/data/bpi-chall.pkl
 bpi-chall.xes
 __pycache__/
 *.pyc
@@ -7,5 +6,5 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
-.env
-.pytest_cache/
+.envdata/event_log/data_log.pkl
+data/event_log/data_log.pkl

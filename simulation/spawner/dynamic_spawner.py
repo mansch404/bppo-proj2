@@ -1,38 +1,30 @@
 import logging
+from markdown_it.rules_block import reference
 from simulation.spawner.arrivals_segmentation import tune_sensitivity, extend_pattern, get_timeframe_years
 import pandas as pd
-import fitter
+import numpy as np
 import pickle
-import scipy.stats as stats
+import copy
+import math
+from simulation.spawner.KDE_DataSimulator import KDE_DataSimulator
+from utils.helper import delta_timestamps_in_seconds, extract_timestamps_per_case, transform_to_float, get_inter_arrival_times_from_list_of_timestamps
+from scipy.stats import wasserstein_distance
 
-"""
-DynamicSpawner
-------------------
-This module implements some of the 'Divide-and-Conquer' strategy for dynamic arrival rate generation. 
-Specifically on the divide phase, for global segmentation.
 
-Acknowledgement:
-    This implementation is based on/adapted from the research paper:
-    "A Divide-and-Conquer Approach for Modeling Arrival Times in Business Process Simulation"
-    by Lukas Kirchdorfer, Konrad Özdemir, Stjepan Kusenic, Han van der Aa, and Heiner Stuckenschmidt (2025).
 
-    Original Code Repository: https://github.com/konradoezdemir/AT-KDE
-    Paper DOI: https://doi.org/10.1007/978-3-032-02867-9_20
-"""
-
-class DynamicSpawner():
-
-    def __init__(self, arrival_times):
+class DynamicSpawner_KDE():
+    def __init__(self, arrival_times, float_format=False):
         logging.basicConfig(level=logging.INFO, format='%(filename)s:%(lineno)d - %(message)s')
         self.logger = logging.getLogger(__name__)
         self.train_set = arrival_times.copy() # Train set or whole set
+        self.float_format = float_format
 
     def generate_next(self):
         return None
 
     def generate_arrivals(self, start_time, end_time):
 
-        ## -- AT_KDE -- ##
+        ## -- AT_KDE Segmentation -- ##
         def _setup_clustered_train_dict(train, prediction_start_t, prediction_end_t, verbose=None):
             """
             in:
@@ -94,15 +86,72 @@ class DynamicSpawner():
                     clustered_train_dict[label] = corresponding_timestamps
             return output_df, clustered_train_dict
 
+        def run_bandwidth_optimisation(train, cluster_values):
+            """
+            Args:
+                train: list of Timestamp (list[Timestamp(...)])
+                cluster_values:
+            """
+
+            train_bw = train
+            val_bw = train
+
+            output_df = pd.DataFrame(
+                                        data=cluster_values,
+                                        index = pd.date_range(val_bw[0].date(), val_bw[-1].date()),
+                                        columns = ['predicted_cluster']
+                                    ).reset_index().rename(columns = {'index':'date'})
+
+            clustered_train_dict = {}
+            clustered_train_dict[cluster_values] = train_bw
+
+            train_df_clustered = (
+                pd.Series(clustered_train_dict)      # index = cluster, values = list of dates
+                .explode()                         # one row per (cluster, date)
+                .rename_axis("cluster")
+                .reset_index(name="date")
+                .sort_values("date", ignore_index=True)
+            )
+
+            # Run optimization of bandwidth parameter
+            bw_factor_dict = {}
+            bw_smooth_factors = [199, 149, 124, 99, 74, 49, 24, 9, 4, 2, 0.5, 0.0, -0.1, -0.25, -0.5, -0.75, -0.85, -0.99]
+
+            best_emd = float('inf')
+            best_bw_factor = None
+            bw_emd_dict = {bw: 0 for bw in bw_smooth_factors}
+            for factor in bw_smooth_factors:
+                bw_factor_dict[list(clustered_train_dict.keys())[0]] = factor
+                ds_class = KDE_DataSimulator(
+                    reference_dataset=train_df_clustered,
+                    train_clustered=clustered_train_dict,
+                    test_cluster_estim=output_df,
+                    bw_factor_dict=bw_factor_dict
+                    )
+                simulated_data, _ = ds_class.sample_kde(start_time=val_bw[0], end_time=val_bw[-1])
+
+                # Evaluate validation performance
+                validation_data = pd.to_datetime(val_bw)
+                emd = evaluate_validation_performance(simulated_data, validation_data)
+                # self.logger.info(f'EMD for bw_smooth_factor {factor}: {emd}')
+
+                bw_emd_dict[factor] = emd
+                if emd < best_emd:
+                    best_bw_factor = factor
+                    best_emd = emd
+
+                # self.logger.info(f'best_emd: {best_emd}')
+                # self.logger.info(f'best_bw_factor: {best_bw_factor}')
+            return best_emd, bw_emd_dict, best_bw_factor
+
         output_df, clustered_train_dict = _setup_clustered_train_dict(self.train_set.copy(), start_time, end_time)
 
-        ## Uncomment for seeing the global segmentation
-        #self.logger.info('Saving output_df to csv...')
-        #output_df.to_csv('output_df.csv')
-        #self.logger.info('Complete.')
-        #self.logger.info(f'number of observations per cluster:\n {output_df.groupby("predicted_cluster").count()}\n')
-        #self.logger.info(f"number of clusters: {len(clustered_train_dict)}")
+        # Uncomment for -> Diagnostics to access globally set clusters
+        # self.logger.info('Saving output_df to csv...')
+        # output_df.to_csv('output_df.csv')
+        # self.logger.info('Complete.')
 
+        self.logger.info(f'number of observations per cluster: {output_df.groupby("predicted_cluster").count()}')
         train_df_clustered = (
             pd.Series(clustered_train_dict)  # index = cluster, values = list of dates
             .explode()  # one row per (cluster, date)
@@ -111,41 +160,107 @@ class DynamicSpawner():
             .sort_values("date", ignore_index=True)
         )
 
+        optimal_bandwidths_per_global_cluster = {}
+
+        for gc in clustered_train_dict:
+            self.logger.info(f'Optimize bandwidth for global cluster {gc}..')
+            _, _, best_bw_factor_gc = run_bandwidth_optimisation(clustered_train_dict[gc].copy(), gc)
+            optimal_bandwidths_per_global_cluster[gc] = best_bw_factor_gc
+
+        self.logger.info(f'Optimization complete.')
+        # simulate arrivals with
+        # KDE
+        self.logger.info('Generating Arrivals now...')
+        ds_class = KDE_DataSimulator(
+            reference_dataset=train_df_clustered,
+            train_clustered=clustered_train_dict,
+            test_cluster_estim=output_df,
+            bw_factor_dict=optimal_bandwidths_per_global_cluster
+        )
+
+        simulated_data, _ = ds_class.sample_kde(start_time=start_time, end_time=end_time)
+        self.logger.info('Complete.')
+        return simulated_data
 
 
-        ## TODO
-        ## Here comes the training/optimisation part for the decided ML model either KDE or new ideas
 
-        return 0
+def store_arrivals(self, sim_case_arrivals, start_time, end_time, train, test, logger, ref):
+    full_dataset = train + test
+    idx = pd.to_datetime(full_dataset, utc=True)
+    start = pd.Timestamp(start_time)
+    end = pd.Timestamp(end_time)
+    sim_period = idx[(idx >= start) & (idx <= end)]
 
-def extract_timestamps_per_case(df):
-    '''
-    :param df: event-log as pandas DataFrame
-    :return: list of first timestamp for each case
-    '''
-    df['time:timestamp'] = pd.to_datetime(df['time:timestamp'])
-    arrival_times = []
-    for _, events in df.groupby('case:concept:name'):  # CHANGED
-        arrival_times += [events['time:timestamp'].min()]
+    logger.info(f"Number of simulated arrivals: {len(sim_case_arrivals)}")
+    logger.info(f"Number of reference arrivals: {len(sim_period)}")
 
+    filename = f"simulated_arrivals_{ref}.csv"
+
+
+
+
+
+
+def evaluate_validation_performance(simulated_data, val_data):
+    """
+    Compute the wasserstein distance between the inter-arrival times of the validation set and the simulated data
+    """
+
+    if len(simulated_data) == 0:
+        sim_data_for_distance = []
+    else:
+        sim_data_for_distance = get_inter_arrival_times_from_list_of_timestamps(simulated_data)
+    test_data_for_distance = get_inter_arrival_times_from_list_of_timestamps(val_data)
+
+    if len(sim_data_for_distance) == 0:
+        emd_iat = np.inf
+    else:
+        emd_iat = wasserstein_distance(test_data_for_distance, sim_data_for_distance)
+
+    return np.sqrt(emd_iat)
+
+def split_arrival_times(list_of_timestamps, threshold=0.8):
+    """
+    Perform temporal hold out split with threshold % training and (1-threshold)% testing.
+
+    Args:
+      list_of_timestamps (list): The generated timestamps.
+
+    Returns:
+      train (list): The timestamps of the train set.
+      test (list): The timestamps of the test set.
+    """
+    arrival_times = list_of_timestamps
     arrival_times.sort()
-    return arrival_times
 
-def delta_timestamps_in_minutes(list_of_arrivals):
+    number_times = (len(arrival_times))
+    train_size = int(threshold * number_times)
 
-    df_arrivals = pd.DataFrame()
-    df_arrivals.insert(0, 'time:timestamp', list_of_arrivals)
-    df_arrivals['time:timestamp'] = pd.to_datetime(df_arrivals['time:timestamp'])
+    train = arrival_times[:train_size]
+    test = arrival_times[train_size:]
 
-    deltas = df_arrivals.diff()
+    return train, test
 
-    deltas_in_minutes = deltas['time:timestamp'].dt.total_seconds() / 60.0
-    deltas_in_minutes = deltas_in_minutes.dropna()
 
-    return deltas_in_minutes
 
-## Functions for the segmentation process
-#-- From AT-KDE -- #
+def clustered_arrival_table(arrival_times):
+    """
+    Args:
+        arrival_times: list of timestamps
+
+    Returns: A table with timestamps segmented by day and hour
+
+    """
+    df = pd.DataFrame({'Timestamp': arrival_times})
+
+    df['Timestamp'] = pd.to_datetime(df['Timestamp']) # Ensure column is datetime type
+
+    df['Day_name'] = df['Timestamp'].dt.day_name() # Saves the name of the day of the week as a string
+    df['Day_index'] = df['Timestamp'].dt.dayofweek # Saves the day of the week as integer range [0,7)
+
+    df['Hour'] = df['Timestamp'].dt.hour
+
+    return df
 
 if __name__ == '__main__':
 
@@ -155,14 +270,35 @@ if __name__ == '__main__':
     with open(file_name, "rb") as f:
         log = pickle.load(f)
 
-    # 2. Extract list of arrivals
+    # 2. Split dataset and extract list of arrivals
     timestamps_list = extract_timestamps_per_case(log)
+    train, test = split_arrival_times(timestamps_list, threshold=0.8)
 
     start_date = timestamps_list[0].date()
     end_date = timestamps_list[-1].date()
 
+    kde_spawner = DynamicSpawner_KDE(train)
 
-    print(start_date, end_date)
+    print(timestamps_list[0])
 
-    dynamic_spawner = DynamicSpawner(arrival_times=timestamps_list)
-    dynamic_spawner.generate_arrivals(start_date, end_date)
+    # Generate arrivals
+    case_arrivals_times = kde_spawner.generate_arrivals(start_date, end_date) # List of timestamps
+    simulated_delays = delta_timestamps_in_seconds(case_arrivals_times) # List of delays
+
+
+
+
+"""
+DynamicSpawner
+------------------
+This module implements some of the 'Divide-and-Conquer' strategy for dynamic arrival rate generation. 
+Specifically on the divide phase, for global segmentation.
+
+Acknowledgement:
+    This implementation is based on/adapted from the research paper:
+    "A Divide-and-Conquer Approach for Modeling Arrival Times in Business Process Simulation"
+    by Lukas Kirchdorfer, Konrad Özdemir, Stjepan Kusenic, Han van der Aa, and Heiner Stuckenschmidt (2025).
+
+    Original Code Repository: https://github.com/konradoezdemir/AT-KDE
+    Paper DOI: https://doi.org/10.1007/978-3-032-02867-9_20
+"""

@@ -263,6 +263,7 @@ def clustered_arrival_table(arrival_times):
     return df
 
 if __name__ == '__main__':
+    ## Testing ##
 
     # 1. Load log
     file_name = r"C:\Users\kickb\OneDrive\Escritorio\bppo-proj2\data\event_log\data_log.pkl"
@@ -289,11 +290,6 @@ if __name__ == '__main__':
 
 
 """
-DynamicSpawner
-------------------
-This module implements some of the 'Divide-and-Conquer' strategy for dynamic arrival rate generation. 
-Specifically on the divide phase, for global segmentation.
-
 Acknowledgement:
     This implementation is based on/adapted from the research paper:
     "A Divide-and-Conquer Approach for Modeling Arrival Times in Business Process Simulation"

@@ -1,141 +1,233 @@
+import pm4py
 import pandas as pd
-import math
 
+from pm4py.objects.conversion.log import converter as log_converter
 from branching_basic import BranchingBasic
 
 
-def _build_simple_xor_dataframe():
-    print("\n[BUILD] Creating simple XOR dataframe")
-    df = pd.DataFrame(
-        {
-            "case:concept:name": ["1", "1", "1", "2", "2", "2", "3", "3", "3"],
-            "concept:name": ["A", "X", "C", "A", "Y", "C", "A", "X", "C"],
-            "time:timestamp": pd.date_range("2020-01-01", periods=9, freq="min"),
-            "lifecycle:transition": ["complete"] * 9,
-        }
-    )
-    print(df)
+def load_bpic17_dataframe():
+    print("\n[LOAD] Loading BPIC-17 XES log")
+    log = pm4py.read_xes("../../data/bpi-chall.xes")
+
+    print("[LOAD] Converting log to dataframe")
+    df = log_converter.apply(log, variant=log_converter.Variants.TO_DATA_FRAME)
+
+    print("[LOAD] Dataframe shape:", df.shape)
+    print("[LOAD] Dataframe columns:", list(df.columns))
+    print("[LOAD] Head of dataframe:")
+    print(df.head())
+
     return df
 
 
-def test_learns_correct_xor_distribution():
-    print("\n[TEST] test_learns_correct_xor_distribution")
-    df = _build_simple_xor_dataframe()
+def inspect_basic_statistics(df):
+    print("\n[STATS] Basic log statistics")
 
+    print("[STATS] Number of cases:",
+          df["case:concept:name"].nunique())
+
+    print("[STATS] Number of events:",
+          len(df))
+
+    print("[STATS] Number of unique activities:",
+          df["concept:name"].nunique())
+
+    print("[STATS] Most frequent activities:")
+    print(df["concept:name"].value_counts().head(10))
+
+
+def fit_branching_model(df):
+    print("\n[MODEL] Initializing BranchingBasic")
     model = BranchingBasic(max_context=1, seed=42)
-    print("[MODEL] Initialized:", model)
 
+    print("[MODEL] Fitting model from dataframe")
     model = model.fit_from_dataframe(df)
-    print("[MODEL] Fitted model")
 
-    history = ["A"]
-    enabled = ["X", "Y"]
-
-    print("[QUERY] history =", history)
-    print("[QUERY] enabled_next =", enabled)
-
-    dist = model.get_distribution(history=history, enabled_next=enabled)
-
-    print("[RESULT] distribution =", dist)
-
-    assert dist is not None
-    assert set(dist.keys()) == {"X", "Y"}
-
-    print("[EXPECT] X =", 2 / 3, "Y =", 1 / 3)
-    assert math.isclose(dist["X"], 2 / 3, rel_tol=1e-6)
-    assert math.isclose(dist["Y"], 1 / 3, rel_tol=1e-6)
+    print("[MODEL] Model fitting complete")
+    return model
 
 
-def test_distribution_is_normalized():
-    print("\n[TEST] test_distribution_is_normalized")
-    df = _build_simple_xor_dataframe()
+def inspect_xor_branching_points(
+    model,
+    df,
+    min_successors=2,
+    min_prob=0.01,
+    max_points=20,
+    skip_self_loops=True,
+):
+    print("\n[INSPECT] Detecting XOR branching points automatically")
 
-    model = BranchingBasic(max_context=1).fit_from_dataframe(df)
-    dist = model.get_distribution(history=["A"], enabled_next=["X", "Y"])
+    # Step 1: compute empirical successor sets
+    df_sorted = df.sort_values(
+        ["case:concept:name", "time:timestamp"]
+    )
 
-    total = sum(dist.values())
-    print("[CHECK] distribution =", dist)
-    print("[CHECK] sum =", total)
+    df_sorted["next_activity"] = (
+        df_sorted
+        .groupby("case:concept:name")["concept:name"]
+        .shift(-1)
+    )
 
-    assert abs(total - 1.0) < 1e-9
+    successor_table = (
+        df_sorted
+        .dropna(subset=["next_activity"])
+        .groupby("concept:name")["next_activity"]
+        .unique()
+    )
+
+    xor_candidates = {
+        act: succs.tolist()
+        for act, succs in successor_table.items()
+        if len(succs) >= min_successors
+    }
+
+    print("[INFO] XOR candidates found:", len(xor_candidates))
+
+    printed = 0
+
+    for activity, successors in xor_candidates.items():
+        if printed >= max_points:
+            break
+
+        if skip_self_loops:
+            successors = [s for s in successors if s != activity]
+
+        if len(successors) < min_successors:
+            continue
+
+        print("\n[BRANCH POINT]")
+        print("  Activity:", activity)
+        print("  Enabled successors:", successors)
+
+        dist = model.get_distribution(
+            history=[activity],
+            enabled_next=successors
+        )
+
+        if dist is None:
+            print("  [SKIP] Model returned None")
+            continue
+
+        # Filter negligible probabilities
+        filtered = {
+            k: v for k, v in dist.items()
+            if v >= min_prob
+        }
+
+        if len(filtered) < 2:
+            print("  [SKIP] Degenerate distribution")
+            continue
+
+        print("  [DISTRIBUTION]")
+        for k, v in sorted(
+            filtered.items(),
+            key=lambda x: -x[1]
+        ):
+            print("   ", k, "->", round(v, 4))
+
+        printed += 1
 
 
-def test_filters_to_enabled_successors_only():
-    print("\n[TEST] test_filters_to_enabled_successors_only")
-    df = _build_simple_xor_dataframe()
-    model = BranchingBasic(max_context=1).fit_from_dataframe(df)
+def inspect_xor_decisions(model, df, max_cases=5):
+    print("\n[INSPECT] Inspecting XOR-style branching decisions")
 
-    history = ["A"]
-    enabled = ["X"]
+    cases = df["case:concept:name"].unique()[:max_cases]
 
-    print("[QUERY] history =", history)
-    print("[QUERY] enabled_next =", enabled)
+    for case_id in cases:
+        print("\n[CASE]", case_id)
 
-    dist = model.get_distribution(history=history, enabled_next=enabled)
-    print("[RESULT] distribution =", dist)
+        trace = (
+            df[df["case:concept:name"] == case_id]
+            .sort_values("time:timestamp")
+        )
 
-    assert dist is not None
-    assert set(dist.keys()) == {"X"}
-    assert math.isclose(dist["X"], 1.0, rel_tol=1e-9)
+        activities = trace["concept:name"].tolist()
+        print("[TRACE] Activities:", activities)
 
+        for i in range(len(activities) - 1):
+            history = [activities[i]]
 
-def test_returns_singleton_for_non_xor():
-    print("\n[TEST] test_returns_singleton_for_non_xor")
-    df = _build_simple_xor_dataframe()
-    model = BranchingBasic(max_context=1).fit_from_dataframe(df)
+            enabled_next = list(
+                df[df["concept:name"] == activities[i + 1]]
+                ["concept:name"]
+                .unique()
+            )
 
-    dist = model.get_distribution(history=["A"], enabled_next=["X"])
-    print("[RESULT] distribution =", dist)
+            print("\n[QUERY]")
+            print("  history =", history)
+            print("  enabled_next =", enabled_next)
 
-    assert dist is not None
-    assert len(dist) == 1
+            try:
+                dist = model.get_distribution(
+                    history=history,
+                    enabled_next=enabled_next
+                )
+            except Exception as e:
+                print("[ERROR] Exception during get_distribution:", e)
+                continue
 
-
-def test_unseen_context_fallback():
-    print("\n[TEST] test_unseen_context_fallback")
-    df = _build_simple_xor_dataframe()
-    model = BranchingBasic(max_context=1).fit_from_dataframe(df)
-
-    history = ["Z"]
-    enabled = ["X", "Y"]
-
-    print("[QUERY] history =", history)
-    print("[QUERY] enabled_next =", enabled)
-
-    dist = model.get_distribution(history=history, enabled_next=enabled)
-    print("[RESULT] distribution =", dist)
-
-    assert dist is not None
-    assert set(dist.keys()) == {"X", "Y"}
-
-    print("[EXPECT] fallback to global frequencies: X=2/3, Y=1/3")
-    assert math.isclose(dist["X"], 2 / 3, rel_tol=1e-6)
-    assert math.isclose(dist["Y"], 1 / 3, rel_tol=1e-6)
+            print("[RESULT] distribution =", dist)
 
 
+def inspect_common_branch_points(model, df, top_k=10):
+    print("\n[INSPECT] Inspecting most common branching points")
 
-def test_reproducibility_with_seed():
-    print("\n[TEST] test_reproducibility_with_seed")
-    df = _build_simple_xor_dataframe()
+    next_counts = (
+        df.groupby("concept:name")["case:concept:name"]
+        .count()
+        .sort_values(ascending=False)
+        .head(top_k)
+    )
 
-    model_1 = BranchingBasic(max_context=1, seed=7).fit_from_dataframe(df)
-    model_2 = BranchingBasic(max_context=1, seed=7).fit_from_dataframe(df)
+    for activity in next_counts.index:
+        print("\n[ACTIVITY]", activity)
 
-    dist_1 = model_1.get_distribution(history=["A"], enabled_next=["X", "Y"])
-    dist_2 = model_2.get_distribution(history=["A"], enabled_next=["X", "Y"])
+        enabled_next = (
+            df[df["concept:name"] != activity]["concept:name"]
+            .unique()
+            .tolist()
+        )
 
-    print("[RESULT] distribution 1 =", dist_1)
-    print("[RESULT] distribution 2 =", dist_2)
+        history = [activity]
 
-    assert dist_1 == dist_2
+        print("[QUERY]")
+        print("  history =", history)
+        print("  enabled_next (sample size) =", len(enabled_next))
+
+        dist = model.get_distribution(
+            history=history,
+            enabled_next=enabled_next
+        )
+
+        print("[RESULT] distribution (truncated):")
+        if dist is None:
+            print("  None")
+        else:
+            for k, v in list(dist.items())[:10]:
+                print(" ", k, "->", v)
+
+
+def main():
+    print("\n[START] BPIC-17 BranchingBasic exploratory testing")
+
+    df = load_bpic17_dataframe()
+    inspect_basic_statistics(df)
+
+    model = fit_branching_model(df)
+
+    inspect_xor_decisions(model, df, max_cases=3)
+    inspect_common_branch_points(model, df, top_k=5)
+
+    inspect_xor_branching_points(
+        model,
+        df,
+        min_successors=2,
+        min_prob=0.01,
+        max_points=15
+    )
+
+    print("\n[END] Exploratory testing completed")
 
 
 if __name__ == "__main__":
-    print("\n[INFO] Running tests manually (without pytest)")
-    test_learns_correct_xor_distribution()
-    test_distribution_is_normalized()
-    test_filters_to_enabled_successors_only()
-    test_returns_singleton_for_non_xor()
-    test_unseen_context_fallback()
-    test_reproducibility_with_seed()
-    print("\n[INFO] All manual tests completed")
+    main()

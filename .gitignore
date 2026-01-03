@@ -11,3 +11,4 @@ data/event_log/data_log.pkl
 event_log_simulations_atkde/
 simulation/spawner/config.py
 simulation/spawner/DynamicSpawner2.py
+/data/bpi-chall.xes.save

@@ -1,7 +1,24 @@
+"""
+advanced_testing.py
+
+Exploratory test harness for BranchingAdvanced on the BPIC-17 log.
+
+Design goals:
+- Same overall "console report" style as basic_testing.py
+- End-to-end: load XES -> dataframe -> discover Petri net -> token-replay fit -> inspect learned decision points
+- Robust against small API differences (e.g., trace representation)
+
+Notes:
+- This script is intentionally defensive: it cross-checks enabled sets derived from the
+  decision key against enabled sets returned by replay extraction.
+"""
+
 import pm4py
 import pandas as pd
 
 from pm4py.objects.conversion.log import converter as log_converter
+
+from pm4py.algo.discovery.inductive import algorithm as inductive_miner
 
 from branching_advanced import BranchingAdvanced, FitConfig
 
@@ -9,6 +26,9 @@ from branching_advanced import BranchingAdvanced, FitConfig
 BPIC17_XES_PATH = "../../data/bpi-chall.xes"
 
 
+# -----------------------------
+# Load / prep
+# -----------------------------
 def load_bpic17_log_and_dataframe():
     print("\n[LOAD] Loading BPIC-17 XES log")
     log = pm4py.read_xes(BPIC17_XES_PATH)
@@ -19,54 +39,70 @@ def load_bpic17_log_and_dataframe():
     print("[LOAD] Dataframe shape:", df.shape)
     print("[LOAD] Dataframe columns:", list(df.columns))
     print("[LOAD] Head of dataframe:")
-    print(df.head())
+    print(df.head(5))
 
     return log, df
 
 
-def discover_petri_net(log):
-    print("\n[DISCOVER] Discovering Petri net with Inductive Miner")
-    net, initial_marking, final_marking = pm4py.discover_petri_net_inductive(log)
-
-    print("[DISCOVER] Net elements:",
-          "places =", len(net.places),
-          "| transitions =", len(net.transitions),
-          "| arcs =", len(net.arcs))
-    print("[DISCOVER] Initial marking tokens:", len(initial_marking))
-    if final_marking is not None:
-        print("[DISCOVER] Final marking tokens:", len(final_marking))
-
-    return net, initial_marking, final_marking
-
-
-def inspect_basic_statistics(df):
+def print_basic_stats(df: pd.DataFrame):
     print("\n[STATS] Basic log statistics")
 
-    print("[STATS] Number of cases:",
-          df["case:concept:name"].nunique())
+    case_col = "case:concept:name" if "case:concept:name" in df.columns else None
+    act_col = "concept:name" if "concept:name" in df.columns else None
 
-    print("[STATS] Number of events:",
-          len(df))
+    if case_col:
+        print("[STATS] Number of cases:", df[case_col].nunique())
+    print("[STATS] Number of events:", len(df))
 
-    if "concept:name" in df.columns:
-        print("[STATS] Unique activities:",
-              df["concept:name"].nunique())
+    if act_col:
+        print("[STATS] Unique activities:", df[act_col].nunique())
         print("[STATS] Top 10 activities:")
-        print(df["concept:name"].value_counts().head(10))
+        print(df[act_col].value_counts().head(10))
 
     if "org:resource" in df.columns:
-        print("[STATS] Unique resources:",
-              df["org:resource"].nunique())
+        print("[STATS] Unique resources:", df["org:resource"].nunique())
 
 
+# -----------------------------
+# Petri net discovery
+# -----------------------------
+def discover_petri_net(log):
+    print("\n[DISCOVER] Discovering Petri net with Inductive Miner")
+
+    # Preferred: returns (net, im, fm) in many PM4Py versions
+    try:
+        net, im, fm = pm4py.discover_petri_net_inductive(log)
+    except Exception:
+        # Fallback: inductive miner returns a ProcessTree, then convert to Petri net
+        tree = inductive_miner.apply(log)
+        from pm4py.objects.conversion.process_tree import converter as pt_converter
+        net, im, fm = pt_converter.apply(tree, variant=pt_converter.Variants.TO_PETRI_NET)
+
+    print(
+        "[DISCOVER] Net elements: places =",
+        len(net.places),
+        "| transitions =",
+        len(net.transitions),
+        "| arcs =",
+        len(net.arcs),
+    )
+    print("[DISCOVER] Initial marking tokens:", sum(im.values()) if hasattr(im, "values") else 0)
+    print("[DISCOVER] Final marking tokens:", sum(fm.values()) if hasattr(fm, "values") else 0)
+
+    return net, im, fm
+
+
+
+# -----------------------------
+# Model fit
+# -----------------------------
 def fit_branching_model(df, net, initial_marking, final_marking):
     print("\n[MODEL] Initializing BranchingAdvanced")
 
-    # Keep configuration explicit so results are reproducible and easy to justify in the report
     config = FitConfig(
         case_id_col="case:concept:name",
         activity_col="concept:name",
-        timestamp_col="time:timestamp",
+        timestamp_col="time:timestamp" if "time:timestamp" in df.columns else None,
         lifecycle_col="lifecycle:transition" if "lifecycle:transition" in df.columns else None,
         keep_only_complete=True,
         max_tau_steps_per_event=50,
@@ -92,112 +128,188 @@ def fit_branching_model(df, net, initial_marking, final_marking):
     return model
 
 
-def inspect_model_overview(model, top_k=10):
+# -----------------------------
+# Inspection helpers
+# -----------------------------
+def inspect_model_overview(model: BranchingAdvanced, top_k=10):
     print("\n[MODEL] Overview")
 
-    # These are implementation internals; they are useful for debugging and reporting,
-    # and are stable enough for this uni project testing file.
-    n_decisions = len(getattr(model, "_models", {}))
-    n_features = len(getattr(model, "_idx2feat", []))
+    # Model internals are used only for reporting; this script does not modify them.
+    learned = getattr(model, "_models", {})  # pylint: disable=protected-access
+    empirical = getattr(model, "_empirical", {})  # pylint: disable=protected-access
+    vocab = getattr(model, "_feature_index", {})  # pylint: disable=protected-access
 
-    print("[MODEL] Decision points learned:", n_decisions)
-    print("[MODEL] Feature vocabulary size:", n_features)
+    print("[MODEL] Decision points learned:", len(learned))
+    print("[MODEL] Feature vocabulary size:", len(vocab))
 
-    empirical = getattr(model, "_empirical", {})
-    if empirical:
-        totals = []
-        for key, cnts in empirical.items():
-            totals.append((key, sum(cnts.values())))
-        totals.sort(key=lambda x: -x[1])
+    if not empirical:
+        print("[MODEL] No empirical distributions stored (this is unexpected for a successful fit).")
+        return
 
-        print(f"[MODEL] Top {min(top_k, len(totals))} decision points by training examples:")
-        for key, n in totals[:top_k]:
-            enabled = list(key[1])
-            marking_sig = key[0]
-            ms_str = str(marking_sig)
-            print("  - examples =", n, "| enabled =", enabled, "| marking_sig =", ms_str[:60] + ("..." if len(ms_str) > 60 else ""))
+    totals = [(key, sum(cnts.values())) for key, cnts in empirical.items()]
+    totals.sort(key=lambda x: -x[1])
 
+    print(f"[MODEL] Top {min(top_k, len(totals))} decision points by training examples:")
+    for key, n in totals[:top_k]:
+        enabled_from_key = list(key[1])
+        marking_sig = key[0]
+        print("  - examples =", n, "| enabled =", enabled_from_key, "| marking_sig =", marking_sig)
 
 
-def _predict_distribution_for_example(model, key, history):
-    model_entry = model._models.get(key)  # pylint: disable=protected-access
+def _predict_distribution(model: BranchingAdvanced, key, history):
+    """
+    Predict a probability distribution for a specific decision key and history.
+
+    Returns dict[label -> prob] or None if the key is unknown.
+    """
+    model_entry = getattr(model, "_models", {}).get(key)  # pylint: disable=protected-access
     if model_entry is None:
         return None
 
     classes = model_entry["classes"]
-    nb = model_entry["model"]
+    clf = model_entry["model"]
 
     x = model._vectorize(history, config=model.config)  # pylint: disable=protected-access
-    probs = nb.predict_proba(x)
-    row = probs[0] if hasattr(probs, "__len__") and len(probs) > 0 else probs
+    probs = clf.predict_proba(x)
 
-    return {cls: float(p) for cls, p in zip(classes, row)}
-def _fmt_any(x, max_len=80):
-    s = x if isinstance(x, str) else repr(x)
-    return s[:max_len] + ("..." if len(s) > max_len else "")
+    # sklearn usually returns shape (1, n_classes); be robust
+    if hasattr(probs, "shape") and len(probs.shape) == 2:
+        probs = probs[0]
+
+    return {cls: float(p) for cls, p in zip(classes, probs)}
+
+
+def _iter_traces_for_inspection(model: BranchingAdvanced, df: pd.DataFrame):
+    """
+    Yield traces in a way compatible with multiple possible implementations.
+
+    - If BranchingAdvanced._build_traces returns list[list[str]], we fabricate case ids.
+    - If it returns list[dict] with case_id/events, we pass through.
+    """
+    work = model._prepare_dataframe(df, model.config)  # pylint: disable=protected-access
+    traces = model._build_traces(work, model.config)  # pylint: disable=protected-access
+
+    # Case 1: list of lists
+    if traces and isinstance(traces[0], list):
+        for i, seq in enumerate(traces, start=1):
+            yield {"case_id": f"trace_{i}", "events": seq}
+
+    # Case 2: already dict-like
+    else:
+        for tr in traces:
+            if isinstance(tr, dict) and "events" in tr:
+                yield tr
+            else:
+                # Last resort: treat as sequence
+                yield {"case_id": "trace_unknown", "events": list(tr)}
 
 
 def inspect_replay_decisions(model, df, net, initial_marking, max_cases=3, max_points_per_case=8, min_prob=0.01):
     print("\n[INSPECT] Inspecting decision points via replay (sample cases)")
 
-    # Reuse the model's preprocessing so this testing script stays consistent with training
-    work = model._prepare_dataframe(df, model.config)  # pylint: disable=protected-access
+    traces = list(_iter_traces_for_inspection(model, df))
 
-    case_col = model.config.case_id_col
-    act_col = model.config.activity_col
+    for ci, trace in enumerate(traces[:max_cases], start=1):
+        case_id = trace["case_id"]
+        events = trace["events"]
 
-    for ci, (case_id, g) in enumerate(work.groupby(case_col, sort=False), start=1):
-        if ci > max_cases:
-            break
+        print(f"\n[CASE] {ci} / {max_cases} | case_id = {case_id} | events = {len(events)}")
 
-        trace = g[act_col].tolist()
-        print(f"\n[CASE] {ci} / {max_cases} | case_id = {case_id} | events = {len(trace)}")
-
+        # IMPORTANT: BranchingAdvanced expects a sequence of activity labels
         examples = model._replay_and_extract_examples(  # pylint: disable=protected-access
-            trace,
+            events,
             net=net,
             initial_marking=initial_marking,
             config=model.config,
         )
 
-        if not examples:
-            print("  [INFO] No decision points found in this case.")
-            continue
+        printed = 0
+        for (key, history, enabled_labels, chosen) in examples:
+            dist = _predict_distribution(model, key, history)
+            if not dist:
+                continue
 
-        shown = 0
-        for key, enabled_labels, history, chosen in examples:
-            if shown >= max_points_per_case:
-                print(f"  [INFO] Reached max_points_per_case = {max_points_per_case}")
+            # Filter small probs for readability
+            filtered = {k: v for k, v in dist.items() if v >= min_prob}
+            if len(filtered) < 2:
+                continue
+
+            enabled_from_key = list(key[1])
+            enabled_from_replay = list(enabled_labels)
+
+            print("\n  [DECISION POINT]")
+            print("   marking_sig:", key[0])
+            print("   enabled:", enabled_from_key)
+
+            # Consistency check: this is the main issue in the previous version
+            if sorted(enabled_from_replay) != sorted(enabled_from_key):
+                print("   enabled_from_replay:", enabled_from_replay)
+
+            print("   history_tail:", list(history[-6:]))
+            print("   actual_next:", chosen)
+
+            print("   [DISTRIBUTION]")
+            for lbl, prob in sorted(filtered.items(), key=lambda x: -x[1]):
+                print("    ", lbl, "->", round(prob, 4))
+
+            printed += 1
+            if printed >= max_points_per_case:
                 break
 
-            dist = _predict_distribution_for_example(model, key, history)
-            if dist is None:
-                # Not all decision keys encountered in replay will necessarily be trained
+        if printed == 0:
+            print("  [INFO] No decision points found in this case.")
+
+
+def inspect_global_examples(model, df, net, initial_marking, max_points=15, min_prob=0.01):
+    print("\n[INSPECT] Inspecting global decision-point examples (across log)")
+
+    traces = list(_iter_traces_for_inspection(model, df))
+
+    printed = 0
+    for trace in traces:
+        examples = model._replay_and_extract_examples(  # pylint: disable=protected-access
+            trace["events"],
+            net=net,
+            initial_marking=initial_marking,
+            config=model.config,
+        )
+
+        for (key, history, enabled_labels, chosen) in examples:
+            dist = _predict_distribution(model, key, history)
+            if not dist:
                 continue
 
             filtered = {k: v for k, v in dist.items() if v >= min_prob}
             if len(filtered) < 2:
                 continue
 
-            shown += 1
-            print("\n  [DECISION POINT]")
-            print("   marking_sig:", _fmt_any(key[0], max_len=80))
-            print("   enabled:", list(enabled_labels))
+            enabled_from_key = list(key[1])
+            enabled_from_replay = list(enabled_labels)
+
+            print("\n  [EXAMPLE]")
+            print("   marking_sig:", key[0])
+            print("   enabled:", enabled_from_key)
+            if sorted(enabled_from_replay) != sorted(enabled_from_key):
+                print("   enabled_from_replay:", enabled_from_replay)
             print("   history_tail:", list(history[-6:]))
             print("   actual_next:", chosen)
-
             print("   [DISTRIBUTION]")
-            for k, v in sorted(filtered.items(), key=lambda x: -x[1]):
-                print("    ", k, "->", round(v, 4))
+            for lbl, prob in sorted(filtered.items(), key=lambda x: -x[1]):
+                print("    ", lbl, "->", round(prob, 4))
 
-        if shown == 0:
-            print("  [INFO] No multi-option distributions above threshold in this case.")
+            printed += 1
+            if printed >= max_points:
+                return
 
+
+# -----------------------------
+# Main
+# -----------------------------
 def main():
     print("\n[START] BPIC-17 BranchingAdvanced exploratory testing")
 
     log, df = load_bpic17_log_and_dataframe()
-    inspect_basic_statistics(df)
+    print_basic_stats(df)
 
     net, initial_marking, final_marking = discover_petri_net(log)
 
@@ -205,7 +317,7 @@ def main():
 
     inspect_model_overview(model, top_k=10)
     inspect_replay_decisions(model, df, net, initial_marking, max_cases=3, max_points_per_case=8, min_prob=0.01)
-    #inspect_global_examples(model, df, net, initial_marking, max_points=15, min_prob=0.01)
+    inspect_global_examples(model, df, net, initial_marking, max_points=15, min_prob=0.01)
 
     print("\n[END] Exploratory testing completed")
 

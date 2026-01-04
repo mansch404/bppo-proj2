@@ -5,15 +5,16 @@ Run the business process simulation using Petri Net
 
 import pm4py
 from engine import SimulationEngine
+from pathlib import Path
 
 
 def main():
     """Run simulation with Petri Net process model"""
 
     # Load BPMN and convert to Petri Net
-    bpmn_path = "process_model.bpmn"
-    bpmn_graph = pm4py.read_bpmn(bpmn_path)
-    path_to_xes = '../data/BPI Challenge 2017.xes'
+    script_dir = Path(__file__).parent
+    bpmn_path = script_dir / "process_model.bpmn"
+    bpmn_graph = pm4py.read_bpmn(str(bpmn_path))
 
     # Convert BPMN to Petri Net
     net, initial_marking, final_marking = pm4py.convert_to_petri_net(bpmn_graph)
@@ -30,7 +31,8 @@ def main():
         initial_marking=initial_marking,
         final_marking=final_marking,
         event_log_path="simulation_log.csv",
-        original_log_path=path_to_xes
+        fitted_distributions_path="fitted_distributions.pkl",
+        use_advanced_model=False,  # Set to True to use advanced processing time model (quantile regression)
     )
 
     # Spawn process instances

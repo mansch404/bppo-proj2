@@ -18,6 +18,7 @@ from sklearn.preprocessing import LabelEncoder
 import lightgbm as lgb
 import pickle
 import json
+from pathlib import Path
 
 
 # =============================================================================
@@ -66,7 +67,7 @@ def extract_processing_times_for_training(df: pd.DataFrame) -> pd.DataFrame:
     # Sort by case and timestamp
     df = df.sort_values(["case:concept:name", "time:timestamp"]).reset_index(drop=True)
 
-    print("\nExtracting events with full context (no percentile filtering)...")
+    print("\nExtracting events with full context.")
     training_data = []
 
     for case_id, case_df in df.groupby("case:concept:name"):
@@ -770,7 +771,9 @@ def main():
     """Main training pipeline."""
 
     # 1. Load data
-    df = load_event_log("BPI Challenge 2017.xes")
+    script_dir = Path(__file__).parent
+    data_path = script_dir / "../../data/bpi-chall.xes"
+    df = load_event_log(str(data_path))
 
     # 2. Extract processing times with context
     training_df = extract_processing_times_for_training(df)

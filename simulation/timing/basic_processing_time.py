@@ -11,6 +11,7 @@ from scipy import stats
 from scipy.stats import kstest
 import pickle
 import json
+from pathlib import Path
 
 
 def load_event_log(path: str):
@@ -358,7 +359,9 @@ def sample_processing_time(activity: str, fitted_distributions: dict) -> float:
 def main():
     # Load log
     print("Loading event log...")
-    df = load_event_log("BPI Challenge 2017.xes")
+    script_dir = Path(__file__).parent
+    data_path = script_dir / "../../data/bpi-chall.xes"
+    df = load_event_log(str(data_path))
 
     print(f"Total events: {len(df)}")
     print(f"Unique activities: {df['concept:name'].nunique()}")

@@ -2,6 +2,6 @@
 Resource Manager Package
 """
 
-from .resource_manager import ResourceManager
+from .resource_manager import AdvancedResourceManager
 
-__all__ = ["ResourceManager"]
+__all__ = ["AdvancedResourceManager"]

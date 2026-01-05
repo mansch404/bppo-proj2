@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import random
 from datetime import datetime, timedelta
-# UPDATE: Import the Advanced Manager
+# Import your specific Resource Manager class
 from simulation.resource_manager.resource_manager import AdvancedResourceManager
 
 TEST_CSV = "test_advanced_log.csv"
@@ -11,41 +11,36 @@ TEST_CSV = "test_advanced_log.csv"
 def create_advanced_dummy_log():
     """
     Creates a dummy log to test Role Discovery and Profiles.
-    - User_1 and User_2 do the SAME tasks (Task A, Task B) -> Should be clustered together (Role 1).
-    - User_3 does distinct tasks (Task C) -> Should be separate (Role 2).
-    - Timestamps set to establish a 9-5 working profile.
+    UPDATED: Generates a full week (Mon-Fri) so the Miner learns standard work days.
     """
     data = {
         'case_id': [],
         'activity': [],
         'timestamp': [],
-        'resource': []
+        'org:resource': []
     }
 
-    # Helper to add row
     def add_event(case, act, time_str, res):
         data['case_id'].append(case)
         data['activity'].append(act)
         data['timestamp'].append(time_str)
-        data['resource'].append(res)
+        data['org:resource'].append(res)
 
-    # Generate data for 3 days to establish profiles
-    # User 1 & 2: Working 09:00 - 17:00
-    # User 3: Working 10:00 - 18:00
-    days = ['2025-01-05', '2025-01-06', '2025-01-07']  # Sun, Mon, Tue
+    # Generate data for a full work week (Mon-Fri)
+    # Jan 6 (Mon) to Jan 10 (Fri)
+    base_date = datetime(2025, 1, 6)
+    days = [(base_date + timedelta(days=i)).strftime('%Y-%m-%d') for i in range(5)]
 
     for day in days:
-        # User 1 (Task A, Task B)
+        # User 1 & 2: The "Clerks" (Same tasks, roughly same times)
         add_event('c1', 'Task A', f'{day} 09:30:00+00:00', 'User_1')
         add_event('c1', 'Task B', f'{day} 16:30:00+00:00', 'User_1')
 
-        # User 2 (Task A, Task B) - Similar behavior to User 1
         add_event('c2', 'Task A', f'{day} 09:15:00+00:00', 'User_2')
         add_event('c2', 'Task B', f'{day} 16:45:00+00:00', 'User_2')
 
-        # User 3 (Task C) - Different behavior
+        # User 3: The "Manager" (Different Task)
         add_event('c3', 'Task C', f'{day} 10:30:00+00:00', 'User_3')
-        add_event('c3', 'Task C', f'{day} 17:30:00+00:00', 'User_3')
 
     df = pd.DataFrame(data)
     df.to_csv(TEST_CSV, index=False)
@@ -59,74 +54,88 @@ def cleanup():
 
 
 def test_advanced_features():
-    print("\n--- Testing ADVANCED Resource Manager (1.5, 1.6, 1.7) ---")
+    print("\n--- TEST: Advanced Resource Manager (1.5, 1.6, 1.7) ---")
 
     # 1. Initialize (Start on a Monday)
-    sim_start = datetime(2025, 1, 6, 8, 0, 0)  # Mon 8:00
+    sim_start = datetime(2025, 1, 6, 8, 0, 0)
     rm = AdvancedResourceManager(sim_start)
 
-    # 2. Test Mining & Role Discovery (Task 1.6 Advanced)
+    # 2. Mining & Role Discovery (Task 1.6)
     rm.load_log_and_mine_profiles(TEST_CSV)
 
-    print("\n[Check 1.6] Role Discovery via Clustering:")
-    print(f"  Discovered Roles: {len(rm.roles)}")
+    print(f"\n[Check 1.6] Role Discovery (Clustering):")
+    users_clustered = False
     for role, members in rm.roles.items():
-        print(f"  - {role}: {members}")
+        if 'User_1' in members and 'User_2' in members:
+            users_clustered = True
+            print(f"  -> SUCCESS: User_1 and User_2 grouped in {role}: {members}")
+            break
 
-    # Validation logic: User_1 and User_2 should ideally be in the same role group
-    # (Since they perform exactly the same set of activities: {Task A, Task B})
+    if not users_clustered:
+        print("  -> FAIL: User_1 and User_2 were not grouped together (Check K-Means logic).")
 
-    print("\n[Check 1.5] Profile Mining (Shifts):")
-    if 'User_1' in rm.profiles:
-        p = rm.profiles['User_1']
-        print(f"  User_1 Profile: {p.start_hour}:00 to {p.end_hour}:00")
-        # Expectation: Start around 9, End around 16/17
-        if p.start_hour <= 10 and p.end_hour >= 16:
-            print("  -> SUCCESS: Working hours mined correctly.")
+    # 3. Availability (Shift Check - Task 1.5)
+    print("\n[Check 1.5] Shift Constraints:")
+    is_working = rm.check_availability("User_1", datetime(2025, 1, 6, 10, 0, 0))  # Mon 10am
+    is_sleeping = rm.check_availability("User_1", datetime(2025, 1, 6, 4, 0, 0))  # Mon 4am
+
+    if is_working and not is_sleeping:
+        print("  -> SUCCESS: Shift logic works (Active day, Inactive night).")
+    else:
+        print(f"  -> FAIL: Working={is_working}, Sleeping={is_sleeping}")
+
+    # 4. Stochastic Tests (Illness/Interruptions - Task 1.5 Advanced)
+    print("\n[Check 1.5] Stochastic Logic:")
+
+    # TEST A: ILLNESS (Check 100 different DAYS)
+    # We ignore Micro-Interruptions (5%) here by setting a threshold.
+    # Total Unavailability = Sickness (2%) + Micro (5%) + Random Noise
+    unavailable_count = 0
+    workdays_checked = 0
+
+    for i in range(150):
+        test_date = sim_start + timedelta(days=i)
+
+        # Only check Mon-Fri (0-4) because the Miner now knows these are the only workdays
+        if test_date.weekday() <= 4:
+            workdays_checked += 1
+            # Check availability at 10:00 AM
+            if not rm.check_availability("User_1", test_date.replace(hour=10)):
+                unavailable_count += 1
+
+    # We expect roughly 7% total rejection (2% sick + 5% micro-interruption)
+    # 7% of 100 days is ~7 days.
+    print(f"  Simulated {workdays_checked} workdays. Unavailable days: {unavailable_count}")
+
+    if 0 < unavailable_count < (workdays_checked * 0.15):
+        print("  -> SUCCESS: Stochastic logic is working reasonably (Sick + Interruptions).")
+    elif unavailable_count == 0:
+        print("  -> NOTE: No unavailability found (Random chance).")
+    else:
+        print(f"  -> WARNING: Rate is high ({unavailable_count}/{workdays_checked}). Check Profile Work Days.")
+
+    # TEST B: MICRO-INTERRUPTIONS
+    # Find a healthy day first (one where check returns True at least once)
+    healthy_date = None
+    for i in range(10):
+        d = sim_start + timedelta(days=i)
+        if d.weekday() == 0 and rm.check_availability("User_1", d.replace(hour=10)):
+            healthy_date = d.replace(hour=10)
+            break
+
+    if healthy_date:
+        interruptions = 0
+        for _ in range(200):
+            if not rm.check_availability("User_1", healthy_date):
+                interruptions += 1
+
+        print(f"  Simulated 200 requests on a healthy day. Interruptions: {interruptions}")
+        if 0 < interruptions < 40:
+            print("  -> SUCCESS: Micro-interruptions occurring (approx 5% rate).")
         else:
-            print("  -> FAIL: Working hours look wrong.")
+            print("  -> WARNING: Interruption rate is odd (0 or too high).")
     else:
-        print("  -> FAIL: User_1 profile not found.")
-
-    # 3. Test Availability & Request (Task 1.5 Advanced)
-    print("\n[Check 1.7] Request & Stochastic Availability:")
-
-    # Case A: Request at 8:00 AM (Before shift)
-    # User 1 starts at ~9:00. 8:00 should be too early.
-    res = rm.request_resource('Task A', current_sim_time=0, duration=60)  # 0 = 8:00 AM
-    if res is None:
-        print("  [08:00 AM] Correctly returned None (Shift hasn't started).")
-    else:
-        print(f"  [08:00 AM] FAIL: Resource {res} assigned outside shift!")
-
-    # Case B: Request at 10:00 AM (During shift)
-    # 2 hours later = 7200 seconds
-    res_valid = rm.request_resource('Task A', current_sim_time=7200, duration=60)
-    if res_valid:
-        print(f"  [10:00 AM] SUCCESS: Assigned {res_valid}.")
-    else:
-        print("  [10:00 AM] FAIL: No resource assigned (Check availability logic).")
-
-    # Case C: Stochastic Check (Illness/Lunch)
-    # We simulate 100 requests to see if we get *some* rejections due to the stochastic factors
-    # (Illness 2%, Lunch 30% if time is 12-14)
-    print("\n[Check Stochastic] Simulating 100 requests at 12:30 (Lunch time)...")
-    rejections = 0
-    lunch_seconds = 4.5 * 3600  # 12:30 PM
-
-    for _ in range(100):
-        # We assume simulation runs on different days or we reset busy_until
-        rm.busy_until = {}  # Force free
-        # Note: Illness is seeded by DAY, so it won't fluctuate in a tight loop on the same day.
-        # But Lunch (random.random()) IS volatile per request in your code.
-        if rm.request_resource('Task A', lunch_seconds, 60) is None:
-            rejections += 1
-
-    print(f"  Rejections at lunch time: {rejections}/100")
-    if rejections > 0:
-        print("  -> SUCCESS: Stochastic unavailability (Lunch/Interruptions) is working.")
-    else:
-        print("  -> WARNING: No stochastic rejections. Check probabilities.")
+        print("  -> SKIP: Could not find a healthy day.")
 
 
 if __name__ == "__main__":

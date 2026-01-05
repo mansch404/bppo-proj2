@@ -1,50 +1,48 @@
 import pandas as pd
 import numpy as np
+import pm4py
 import random
-import math
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Set, Tuple
-
-
-class ResourceProfile:
-    def __init__(self, name, avg_start_hour, avg_end_hour, work_days):
-        self.name = name
-        self.start_hour = int(avg_start_hour)
-        self.end_hour = int(avg_end_hour)
-        self.work_days = work_days
-
-        # Advanced 1.5: Konfiguration
-        self.lunch_window_start = 12
-        self.lunch_window_end = 14
-        # Chance, dass diese Person Überstunden macht (z.B. basierend auf Seniorität im Log)
-        self.overtime_probability = 0.3
+from typing import Optional, Dict, List, Set
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import MultiLabelBinarizer
 
 
 class AdvancedResourceManager:
     def __init__(self, simulation_start_time: datetime):
         self.simulation_start_time = simulation_start_time
 
-        # 1.6 Advanced++: Clustering Data
-        self.roles: Dict[str, List[str]] = {}  # RoleID -> List[ResourceNames]
-        self.activity_permissions: Dict[str, Set[str]] = {}  # Activity -> Set[RoleIDs]
+        # 1.6 Advanced: Role Discovery
+        # RoleID -> List of Resource Names
+        self.roles: Dict[int, List[str]] = {}
+        # Activity -> Set of RoleIDs allowed to perform it
+        self.activity_permissions: Dict[str, Set[int]] = {}
 
-        # 1.7 Metric
+        # 1.5 Advanced: Availability Heatmap
+        # Resource -> Weekday (0-6) -> Hour (0-23) -> Probability (0.0 - 1.0)
+        self.availability_matrix: Dict[str, Dict[int, Dict[int, float]]] = {}
+
+        # 1.7 Metric: Competence (Frequency of performing activity)
         self.competence: Dict[str, Dict[str, int]] = {}
 
-        self.profiles: Dict[str, ResourceProfile] = {}
+        # Tracking state
         self.busy_until: Dict[str, datetime] = {}
-        self.default_profile = ResourceProfile("default", 9, 17, {0, 1, 2, 3, 4})
 
     def load_log_and_mine_profiles(self, log_path: str):
-        print(f"Mining High-Level Profiles & Roles from {log_path}...")
+        """
+        Main mining function.
+        Combines Availability Heatmapping (1.5) AND Role Clustering (1.6).
+        """
+        print(f"--- MINING RESOURCES FROM {log_path} ---")
 
+        # 1. Load Data
         if log_path.endswith('.xes'):
-            import pm4py
             log = pm4py.read_xes(log_path)
             df = pm4py.convert_to_dataframe(log)
         else:
             df = pd.read_csv(log_path)
 
+        # Standardize column names
         res_col = 'org:resource' if 'org:resource' in df.columns else 'resource'
         act_col = 'concept:name' if 'concept:name' in df.columns else 'activity'
         time_col = 'time:timestamp' if 'time:timestamp' in df.columns else 'timestamp'
@@ -52,165 +50,144 @@ class AdvancedResourceManager:
         df[time_col] = pd.to_datetime(df[time_col], utc=True)
         df = df.dropna(subset=[res_col])
 
-        # PREPARATION
-        df['date'] = df[time_col].dt.date
+        # Pre-calculate datetime features
+        df['weekday'] = df[time_col].dt.weekday
         df['hour'] = df[time_col].dt.hour
 
-        resource_activities: Dict[str, Set[str]] = {}
+        # ---------------------------------------------------------
+        # TASK 1.5 ADVANCED: Mining Availability Heatmaps
+        # ---------------------------------------------------------
+        print("Mining Probabilistic Availability Profiles...")
         resources = df[res_col].unique()
 
         for res in resources:
             res_str = str(res)
             res_data = df[df[res_col] == res]
+            self.availability_matrix[res_str] = {}
 
-            # A) Aktivitäten sammeln
-            acts = set(res_data[act_col].unique())
-            resource_activities[res_str] = acts
-
-            # B) Kompetenz zählen
-            for act in acts:
+            # Competence mining (for 1.7)
+            activities = res_data[act_col].unique()
+            for act in activities:
                 count = len(res_data[res_data[act_col] == act])
                 if act not in self.competence: self.competence[act] = {}
                 self.competence[act][res_str] = count
 
-            # C) Zeit-Profile minen
-            daily_stats = res_data.groupby('date')['hour'].agg(['min', 'max'])
-            if daily_stats.empty: continue
+            # Availability Heatmap Calculation
+            # We count events per hour slot relative to total activity
+            # This captures lunch breaks and shifts automatically.
+            total_events = len(res_data)
 
-            avg_start = int(daily_stats['min'].quantile(0.25))
-            avg_end = int(daily_stats['max'].quantile(0.75))
-            if avg_end <= avg_start: avg_end = avg_start + 8
-            active_days = set(res_data[time_col].dt.weekday.unique())
+            for day in range(7):
+                self.availability_matrix[res_str][day] = {}
+                for hour in range(24):
+                    # Count events in this specific slot (e.g., Mondays at 10am)
+                    slot_events = len(res_data[(res_data['weekday'] == day) & (res_data['hour'] == hour)])
 
-            prof = ResourceProfile(res_str, avg_start, avg_end, active_days)
-            # Extra: Wer oft spät arbeitet, hat höhere Overtime-Chance
-            late_work_count = len(res_data[res_data['hour'] > 18])
-            if late_work_count > 5:
-                prof.overtime_probability = 0.8
+                    if total_events > 0:
+                        # Normalize probability.
+                        # We multiply by a factor (e.g. 20) because events are sparse.
+                        # This estimates "If I need a resource at this hour, how likely are they active?"
+                        prob = (slot_events / total_events) * 20.0
+                        prob = min(prob, 0.95)  # Cap at 95% (always chance of illness)
+                    else:
+                        prob = 0.0
 
-            self.profiles[res_str] = prof
-            self.busy_until[res_str] = self.simulation_start_time
+                    self.availability_matrix[res_str][day][hour] = prob
 
-        #1.6 ADVANCED: CLUSTERING (Role Discovery)
-        self._discover_roles_via_clustering(resource_activities)
+        # ---------------------------------------------------------
+        # TASK 1.6 ADVANCED: Role Discovery via K-Means Clustering
+        # ---------------------------------------------------------
+        print("Performing Role Discovery (K-Means Clustering)...")
 
-        print(f"Mined {len(self.profiles)} profiles. Discovered {len(self.roles)} roles via clustering.")
+        # 1. Create Resource-Activity Matrix (Who does what?)
+        # Group by resource and get list of unique activities
+        resource_activities = df.groupby(res_col)[act_col].apply(list).to_dict()
 
-    def _discover_roles_via_clustering(self, resource_activities: Dict[str, Set[str]]):
-        """
-        Gruppiert Ressourcen basierend auf Jaccard-Similarity (Clustering).
-        Das erlaubt 'unscharfe' Rollen (z.B. Junior vs Senior).
-        """
-        # Wir bauen Cluster auf. Ein Cluster ist definiert durch ein Set an Activities.
-        # Structure: list of {'prototype_acts': Set, 'members': List[res]}
-        clusters = []
+        res_list = list(resource_activities.keys())
+        # Convert activity lists to binary matrix (One-Hot Encoding)
+        mlb = MultiLabelBinarizer()
+        activity_matrix = mlb.fit_transform([resource_activities[r] for r in res_list])
 
-        # Schwellenwert: 70% Übereinstimmung reicht für gleiche Rolle
-        SIMILARITY_THRESHOLD = 0.7
+        # 2. Apply K-Means
+        # Estimate clusters: If < 5 resources, use 2 roles. Else, try 5.
+        n_clusters = 5 if len(res_list) > 10 else min(len(res_list), 2)
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(activity_matrix)
 
-        for res, acts in resource_activities.items():
-            best_cluster_idx = -1
-            best_similarity = -1.0
+        # 3. Store Learned Roles
+        for i, label in enumerate(labels):
+            role_id = int(label)
+            res_name = str(res_list[i])
 
-            # Suche passendes Cluster
-            for idx, cluster in enumerate(clusters):
-                # Jaccard Index: Intersection / Union
-                intersection = len(acts.intersection(cluster['prototype_acts']))
-                union = len(acts.union(cluster['prototype_acts']))
-                similarity = intersection / union if union > 0 else 0
+            if role_id not in self.roles:
+                self.roles[role_id] = []
+            self.roles[role_id].append(res_name)
 
-                if similarity > best_similarity:
-                    best_similarity = similarity
-                    best_cluster_idx = idx
-
-            # Entscheidung: Hinzufügen oder neu erstellen
-            if best_similarity >= SIMILARITY_THRESHOLD:
-                clusters[best_cluster_idx]['members'].append(res)
-                # Update des Prototyps (wir lernen neue Activities dazu -> Generalisierung!)
-                clusters[best_cluster_idx]['prototype_acts'].update(acts)
-            else:
-                clusters.append({'prototype_acts': set(acts), 'members': [res]})
-
-        # Cluster in finale Struktur übertragen
-        for idx, cluster in enumerate(clusters):
-            role_name = f"Role_Cluster_{idx}"
-            self.roles[role_name] = cluster['members']
-
-            # Alle Mitglieder erben ALLE Rechte des Clusters (RBAC Generalization)
-            for act in cluster['prototype_acts']:
+            # Assign permissions: If this resource does an activity, their Role allows it
+            for act in resource_activities[res_name]:
                 if act not in self.activity_permissions:
                     self.activity_permissions[act] = set()
-                self.activity_permissions[act].add(role_name)
+                self.activity_permissions[act].add(role_id)
+
+        print(f"--- MINING COMPLETE. Discovered {n_clusters} Roles. ---")
 
     def check_availability(self, resource: str, current_time: datetime) -> bool:
         """
-        1.5 Super Advanced: Krankheit, Overtime, Micro-Interruptions
+        TASK 1.5 ADVANCED: Stochastic Availability Logic
+        Uses the mined Heatmap to determine availability probabilistically.
         """
-        profile = self.profiles.get(resource, self.default_profile)
-
-        # 1. Tag-Check
-        if current_time.weekday() not in profile.work_days: return False
-
-        current_h = current_time.hour
-
-        # 2. Uhrzeit mit OVERTIME Logik
-        # Normalerweise Ende: profile.end_hour.
-        # Overtime möglich bis +2 Stunden, wenn profile.overtime_probability hoch ist.
-        is_working_hours = profile.start_hour <= current_h < profile.end_hour
-
-        is_overtime = False
-        if not is_working_hours:
-            # Check ob wir in der Overtime-Zone sind (bis 2h nach Schichtende)
-            if profile.end_hour <= current_h < (profile.end_hour + 2):
-                # Zufällige Entscheidung pro Stunde (deterministisch für Konsistenz innerhalb der Stunde)
-                hour_seed = f"{resource}_{current_time.date()}_{current_h}"
-                if random.Random(hour_seed).random() < profile.overtime_probability:
-                    is_overtime = True
-
-        if not (is_working_hours or is_overtime):
+        if resource not in self.availability_matrix:
             return False
 
-        # 3. Krankheit (Daily Stochastic)
-        day_seed = f"{resource}_{current_time.date()}"
-        if random.Random(day_seed).random() < 0.02: return False
+        weekday = current_time.weekday()
+        hour = current_time.hour
 
-        # 4. Micro-Interruptions (Meetings/Phone)
-        # Jede Stunde gibt es eine 10% Chance, dass man für 15 Min blockiert ist
-        # Wir simulieren das einfach: Zufallswurf bei jedem Request
-        if random.random() < 0.05:  # 5% Chance kurz weg zu sein
-            return False
+        # 1. Lookup Mined Probability
+        # (e.g., "User_1 is 80% active on Mondays at 10am")
+        prob = self.availability_matrix[resource].get(weekday, {}).get(hour, 0.0)
 
-        # 5. Mittagspause
-        if profile.lunch_window_start <= current_h < profile.lunch_window_end:
-            if random.random() < 0.3: return False
-
-        return True
+        # 2. Apply Stochastic Check (Bernoulli Trial)
+        # This naturally handles lunch (prob drops), night (prob is 0), and sick days (random chance)
+        return random.random() < prob
 
     def request_resource(self, activity: str, current_sim_time: float, duration: float) -> Optional[str]:
+        """
+        TASK 1.7: Resource Allocation
+        """
         real_time = self.simulation_start_time + timedelta(seconds=current_sim_time)
 
-        # A) Roles (Clustering-Based)
-        allowed_roles = self.activity_permissions.get(activity, set())
+        # 1. Filter by Permission (Task 1.6)
+        # Which roles can perform this activity?
+        allowed_role_ids = self.activity_permissions.get(activity, set())
+
         candidates = []
-        for role in allowed_roles:
-            candidates.extend(self.roles[role])
+        for role_id in allowed_role_ids:
+            candidates.extend(self.roles.get(role_id, []))
 
-        if not candidates: return "System"
+        if not candidates: return "System"  # Fallback for automated tasks
 
-        # B) Availability (Overtime/Interruptions)
-        available = []
+        # 2. Filter by Availability (Task 1.5)
+        available_candidates = []
         weights = []
 
         for res in candidates:
-            if not self.check_availability(res, real_time): continue
+            # Check if busy with another simulation task
+            if self.busy_until.get(res, self.simulation_start_time) > real_time:
+                continue
 
-            if self.busy_until.get(res, self.simulation_start_time) <= real_time:
-                available.append(res)
-                # C) Competence Weighting
+            # Check probabilistic availability (Heatmap)
+            if self.check_availability(res, real_time):
+                available_candidates.append(res)
+                # Competence weight (Frequency of doing this task)
                 weights.append(self.competence.get(activity, {}).get(res, 1))
 
-        if not available: return None
+        if not available_candidates:
+            return None  # Nobody available right now
 
-        selected = random.choices(available, weights=weights, k=1)[0]
+        # 3. Random Allocation (Task 1.7)
+        # We use weighted random choices to prefer "experts", but it is still stochastic.
+        selected = random.choices(available_candidates, weights=weights, k=1)[0]
+
+        # Book the resource
         self.busy_until[selected] = real_time + timedelta(seconds=duration)
         return selected

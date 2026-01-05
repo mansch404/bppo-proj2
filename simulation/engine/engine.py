@@ -5,12 +5,23 @@ Core discrete event simulation engine using Petri Net semantics
 
 import simpy
 import random
-from typing import Set, Dict
+import pickle
+from typing import Set, Dict, Optional
 from pm4py.objects.petri_net.obj import PetriNet, Marking
-from .logger import EventLogger
-from simulation.timing.distribution_miner import DistributionMiner
-# from .resource_manager import ResourceManager
+from datetime import datetime, timedelta
+from scipy import stats
 
+from .logger import EventLogger
+
+# Import inference functions from advanced_processing_time module
+try:
+    from timing.advanced_processing_time import (
+        predict_processing_time_distribution,
+        sample_from_quantiles,
+        load_models as load_quantile_models,
+    )
+except ImportError:
+    print("Warning: Could not import advanced_processing_time. Advanced mode will fail if enabled.")
 
 class SimulationEngine:
     def __init__(
@@ -19,180 +30,247 @@ class SimulationEngine:
         initial_marking: Marking,
         final_marking: Marking,
         event_log_path: str,
-        original_log_path: str = ""
+        fitted_distributions_path: str = "fitted_distributions.pkl",
+        quantile_models_path: str = None,
+        use_advanced_model: bool = False,
+        case_attributes: Dict = None,
+        simulation_start_datetime: datetime = None,
+        original_log_path: str = "",
+        resource_manager = None # <--- NEW ARGUMENT
     ):
-        """
-        Initialize simulation engine with Petri Net
-
-        Args:
-            net: Petri Net object from pm4py
-            initial_marking: Initial marking (token positions)
-            final_marking: Final marking (simulation end condition)
-            event_log_path: Path for output CSV event log
-        """
         self.env = simpy.Environment()
         self.net = net
         self.initial_marking = initial_marking
         self.final_marking = final_marking
         self.event_logger = EventLogger(event_log_path)
-        # self.resource_manager = ResourceManager()
         self.case_counter = 0
-        # Initialisiere und trainiere den Miner
-        self.distribution_miner = None
-        if original_log_path:
-            from simulation.timing.distribution_miner import DistributionMiner
-            self.distribution_miner = DistributionMiner(original_log_path)
-            self.distribution_miner.analyze_log()
+
+        self.resource_manager = resource_manager
+
+        # Fallback if no manager provided (simple list)
+        self.fallback_resources = ["System", "User_1", "User_2", "User_3", "Manager"]
+
+        # Default to Monday 2016-01-04 08:00
+        self.simulation_start_datetime = simulation_start_datetime or datetime(
+            2016, 1, 4, 8, 0, 0
+        )
+
+        self.use_advanced_model = use_advanced_model
+
+        self.default_case_attributes = case_attributes or {
+            "RequestedAmount": 15000.0,
+            "LoanGoal": "Home improvement",
+            "ApplicationType": "New credit",
+        }
+
+        self.fitted_distributions = self._load_basic_distributions(
+            fitted_distributions_path
+        )
+
+        self.quantile_models = None
+        if use_advanced_model:
+            if quantile_models_path is None:
+                quantile_models_path = "quantile_models.pkl"
+            self.quantile_models = self._load_advanced_model(quantile_models_path)
 
         # Debug info
         print(f"\nSimulation Engine initialized:")
         print(f"  Places: {len(net.places)}")
         print(f"  Transitions: {len(net.transitions)}")
-        print(f"  Initial marking: {self._marking_to_dict(initial_marking)}")
-        print(f"  Final marking: {self._marking_to_dict(final_marking)}")
+        print(f"  Processing time model: {'Advanced' if self.use_advanced_model else 'Basic'}")
+        print(f"  Resource Manager attached: {self.resource_manager is not None}")
+
+    def _get_current_datetime(self) -> datetime:
+        return self.simulation_start_datetime + timedelta(seconds=self.env.now)
+
+    def _load_basic_distributions(self, filepath: str) -> Dict:
+        try:
+            with open(filepath, "rb") as f:
+                return pickle.load(f)
+        except FileNotFoundError:
+            print(f"Warning: Could not find {filepath}. Using defaults.")
+            return {}
+
+    def _load_advanced_model(self, filepath: str) -> Optional[Dict]:
+        try:
+            return load_quantile_models(filepath)
+        except Exception as e:
+            # print(f"Error loading advanced models: {e}. Falling back to Basic.")
+            self.use_advanced_model = False
+            return None
 
     def _marking_to_dict(self, marking: Marking) -> Dict:
-        """Convert pm4py Marking to simple dict for comparison"""
         return {place.name: tokens for place, tokens in marking.items()}
 
     def _markings_equal(self, m1: Marking, m2: Marking) -> bool:
-        """Compare two markings"""
-        d1 = self._marking_to_dict(m1)
-        d2 = self._marking_to_dict(m2)
-        return d1 == d2
+        return self._marking_to_dict(m1) == self._marking_to_dict(m2)
 
-    def spawn_instance(self):
-        """Spawn a new process instance"""
+    def spawn_instance(self, case_attributes: Dict = None):
         self.case_counter += 1
         case_id = f"case_{self.case_counter}"
-        self.env.process(self.execute_instance(case_id))
+
+        attrs = self.default_case_attributes.copy()
+        if case_attributes:
+            attrs.update(case_attributes)
+
+        self.env.process(self.execute_instance(case_id, attrs))
         return case_id
 
-    def spawn_at_time(self, delay: float):
-        """Spawn a process instance after a delay"""
+    def spawn_at_time(self, delay: float, case_attributes: Dict = None):
         yield self.env.timeout(delay)
-        self.spawn_instance()
+        self.spawn_instance(case_attributes)
 
-    def execute_instance(self, case_id: str):
-        """Execute a process instance using token-based Petri Net semantics"""
-        # Create working copy of marking (as dict for easier handling)
+    def execute_instance(self, case_id: str, case_attributes: Dict):
         marking = Marking()
         for place, tokens in self.initial_marking.items():
             marking[place] = tokens
 
-        iteration = 0
-        max_iterations = 1000  # Safety limit for loops
+        case_context = {
+            "case_id": case_id,
+            "case_start_time": self.env.now,
+            "previous_activity": "START",
+            "event_nr": 0,
+            "case_attributes": case_attributes,
+            "offer_info": {
+                "CreditScore": None,
+                "OfferedAmount": None,
+                "NumberOfTerms": None,
+                "MonthlyCost": None,
+            },
+        }
 
+        iteration = 0
         while not self._markings_equal(marking, self.final_marking):
             iteration += 1
-
-            if iteration > max_iterations:
-                print(f"Warning: {case_id} exceeded max iterations at t={self.env.now}")
+            if iteration > 1000:
+                print(f"Warning: {case_id} exceeded max iterations")
                 break
 
-            # Get all enabled transitions
             enabled = self.get_enabled_transitions(marking)
-
             if not enabled:
-                print(f"Warning: {case_id} reached deadlock at t={self.env.now}")
-                print(f"  Current marking: {self._marking_to_dict(marking)}")
-                print(f"  Expected final: {self._marking_to_dict(self.final_marking)}")
+                print(f"Warning: {case_id} reached deadlock")
                 break
 
-            # Choose transition to fire (random for Task 1.1)
             transition = self.choose_transition(enabled)
 
-            # Fire transition (execute activity)
-            yield self.env.process(self.fire_transition(case_id, transition))
+            # --- CHANGE: Process the transition logic inside fire_transition ---
+            yield self.env.process(
+                self.fire_transition(case_id, transition, case_context)
+            )
 
-            # Update marking (consume/produce tokens)
             marking = self.update_marking(transition, marking)
 
     def get_enabled_transitions(self, marking: Marking) -> Set[PetriNet.Transition]:
-        """Get all enabled transitions for current marking"""
         enabled = set()
-
         for transition in self.net.transitions:
             if self.is_enabled(transition, marking):
                 enabled.add(transition)
-
         return enabled
 
     def is_enabled(self, transition: PetriNet.Transition, marking: Marking) -> bool:
-        """Check if a transition is enabled (all input places have tokens)"""
         for arc in transition.in_arcs:
             place = arc.source
             required = arc.weight if hasattr(arc, "weight") else 1
-
             if place not in marking or marking[place] < required:
                 return False
-
         return True
 
-    def choose_transition(
-        self, enabled: Set[PetriNet.Transition]
-    ) -> PetriNet.Transition:
-        """
-        Choose which transition to fire from enabled set
-        Random choice for Task 1.1 (Task 1.4 will add probabilities)
-        """
+    def choose_transition(self, enabled: Set[PetriNet.Transition]) -> PetriNet.Transition:
         return random.choice(list(enabled))
 
-    def fire_transition(self, case_id: str, transition: PetriNet.Transition):
-        """Fire a transition: execute activity with processing time and logging"""
-        # Skip invisible/silent transitions (tau transitions)
+    def fire_transition(
+        self, case_id: str, transition: PetriNet.Transition, case_context: Dict
+    ):
+        # 1. Handle Silent Transitions
         if transition.label is None or transition.label == "":
-            return self.env.timeout(0)  # Instant event
+            yield self.env.timeout(0)
+            return
 
         activity_name = transition.label
 
-        # Log activity start
+        # 2. Calculate Processing Time FIRST (needed to book the resource)
+        if self.use_advanced_model and self.quantile_models is not None:
+            processing_time = self._get_processing_time_advanced(
+                activity_name, case_context
+            )
+        else:
+            processing_time = self._get_processing_time_basic(activity_name)
+
+        # 3. Request Resource (Wait if busy/unavailable)
+        resource = None
+
+        if self.resource_manager:
+            # Loop until we get a resource (Queueing behavior)
+            while resource is None:
+                # Ask manager: "Can anyone do 'activity_name' right now?"
+                resource = self.resource_manager.request_resource(
+                    activity=activity_name,
+                    current_sim_time=self.env.now,
+                    duration=processing_time
+                )
+
+                if resource is None:
+                    # No one available (night time, or all busy)
+                    # Wait 15 minutes (900 seconds) and check again
+                    yield self.env.timeout(900)
+        else:
+            # Fallback if no manager (old behavior)
+            resource = random.choice(self.fallback_resources)
+
+        # 4. Log Start
         self.event_logger.log_event(
             case_id=case_id,
             activity=activity_name,
             timestamp=self.env.now,
             lifecycle="start",
+            resource=resource
         )
 
-        # Get processing time (Task 1.3 - for now: fixed value)
-        processing_time = self.get_processing_time(activity_name)
-
-        # Simulate processing time
+        # 5. Simulate Work
         yield self.env.timeout(processing_time)
 
-        # Log activity completion
+        # 6. Log Completion
         self.event_logger.log_event(
             case_id=case_id,
             activity=activity_name,
             timestamp=self.env.now,
             lifecycle="complete",
+            resource=resource
         )
+
+        case_context["previous_activity"] = activity_name
+        case_context["event_nr"] += 1
+
+        # Simulate offer info logic
+        if (
+            activity_name == "O_Create Offer"
+            and case_context["offer_info"]["CreditScore"] is None
+        ):
+            case_context["offer_info"] = {
+                "CreditScore": random.randint(500, 1000),
+                "OfferedAmount": case_context["case_attributes"]["RequestedAmount"]
+                * random.uniform(0.8, 1.2),
+                "NumberOfTerms": random.choice([12, 24, 36, 48, 60, 84, 120]),
+                "MonthlyCost": random.uniform(100, 500),
+            }
 
     def update_marking(
         self, transition: PetriNet.Transition, marking: Marking
     ) -> Marking:
-        """Execute Petri Net semantics: consume tokens from inputs, produce to outputs"""
         new_marking = Marking()
-
-        # Copy current marking
         for place, tokens in marking.items():
             new_marking[place] = tokens
 
-        # Consume tokens from input places
         for arc in transition.in_arcs:
             place = arc.source
             tokens_to_remove = arc.weight if hasattr(arc, "weight") else 1
             new_marking[place] -= tokens_to_remove
-
-            # Remove place if no tokens left
             if new_marking[place] == 0:
                 del new_marking[place]
 
-        # Produce tokens in output places
         for arc in transition.out_arcs:
             place = arc.target
             tokens_to_add = arc.weight if hasattr(arc, "weight") else 1
-
             if place in new_marking:
                 new_marking[place] += tokens_to_add
             else:
@@ -200,21 +278,68 @@ class SimulationEngine:
 
         return new_marking
 
-    def get_processing_time(self, activity: str) -> float:
-        """
-        Get processing time for activity based on learned distributions (Task 1.3)
-        """
-        if self.distribution_miner:
-            return self.distribution_miner.get_processing_time(activity)
+    def _get_processing_time_basic(self, activity: str) -> float:
+        if activity not in self.fitted_distributions:
+            return 10.0
 
-        # Fallback, falls kein Miner da ist
-        return 10.0
+        info = self.fitted_distributions[activity]
+        dist_name = info["distribution"]
+        params = info["params"]
+
+        try:
+            if dist_name == "lognorm":
+                shape, loc, scale = params
+                sample = stats.lognorm.rvs(shape, loc, scale)
+            elif dist_name == "expon":
+                loc, scale = params
+                sample = stats.expon.rvs(loc, scale)
+            elif dist_name == "gamma":
+                shape, loc, scale = params
+                sample = stats.gamma.rvs(shape, loc, scale)
+            elif dist_name == "norm":
+                loc, scale = params
+                sample = stats.norm.rvs(loc, scale)
+            else:
+                sample = 10.0
+            return max(0.01, sample)
+        except Exception as e:
+            # print(f"Error sampling for {activity}: {e}")
+            return 10.0
+
+    def _get_processing_time_advanced(self, activity: str, case_context: Dict) -> float:
+        current_datetime = self._get_current_datetime()
+        hour_of_day = current_datetime.hour
+        day_of_week = current_datetime.weekday()
+        elapsed_time = self.env.now - case_context["case_start_time"]
+        case_attrs = case_context["case_attributes"]
+        offer_info = case_context["offer_info"]
+
+        try:
+            predictions = predict_processing_time_distribution(
+                activity=activity,
+                previous_activity=case_context["previous_activity"],
+                requested_amount=case_attrs.get("RequestedAmount", 15000.0),
+                loan_goal=case_attrs.get("LoanGoal", "Unknown"),
+                application_type=case_attrs.get("ApplicationType", "New credit"),
+                event_nr=case_context["event_nr"],
+                elapsed_time=elapsed_time,
+                hour_of_day=hour_of_day,
+                day_of_week=day_of_week,
+                credit_score=offer_info.get("CreditScore"),
+                offered_amount=offer_info.get("OfferedAmount"),
+                number_of_terms=offer_info.get("NumberOfTerms"),
+                monthly_cost=offer_info.get("MonthlyCost"),
+                models_data=self.quantile_models,
+            )
+            return sample_from_quantiles(predictions)
+        except Exception:
+            return self._get_processing_time_basic(activity)
 
     def run(self, until: float):
-        """Run simulation until specified time"""
         print(f"\nStarting simulation (until t={until})...")
+        print(
+            f"  Simulation datetime range: {self.simulation_start_datetime} to {self.simulation_start_datetime + timedelta(seconds=until)}"
+        )
         self.env.run(until=until)
         print(f"Simulation completed. Processed {self.case_counter} cases.")
-
-        # Write event log to CSV
         self.event_logger.write_to_csv()

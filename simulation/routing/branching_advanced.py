@@ -553,10 +553,8 @@ class BranchingAdvanced:
 
         return examples
 
-    
     # Petri net semantics helpers (mirrors your engine logic)
     
-
     @staticmethod
     def _marking_signature(marking: Marking) -> Tuple[Tuple[Tuple[str, int], ...], ...] | Tuple[Tuple[str, int], ...]:
         """
@@ -647,9 +645,7 @@ class BranchingAdvanced:
 
         return False
 
-    
     # Feature engineering
-    
 
     def _build_feature_vocab(
         self,
@@ -732,10 +728,7 @@ class BranchingAdvanced:
             raise RuntimeError("No advanced branching model available for this decision point.")
         raise ValueError(f"Unknown default_strategy: {strategy}")
 
-
-
-# Quick diagnostic (optional)
-
+# Quick diagnostic
 
 def _smoke_test() -> bool:
     # Only checks importability and basic NB behavior

@@ -13,6 +13,9 @@ from scipy import stats
 
 from .logger import EventLogger
 
+from ..routing.branching_basic import BranchingBasic
+from ..routing.branching_advanced import BranchingAdvanced
+
 # Import inference functions from advanced_processing_time module
 try:
     from timing.advanced_processing_time import (
@@ -33,6 +36,8 @@ class SimulationEngine:
         fitted_distributions_path: str = "fitted_distributions.pkl",
         quantile_models_path: str = None,
         use_advanced_model: bool = False,
+        branching_mode: str = "none",  # <--- NEW ARGUMENT
+        branching_model_path: str = None,  # <--- NEW ARGUMENT
         case_attributes: Dict = None,
         simulation_start_datetime: datetime = None,
         original_log_path: str = "",
@@ -56,6 +61,24 @@ class SimulationEngine:
         )
 
         self.use_advanced_model = use_advanced_model
+
+        # Branching (Task 1.4)
+        # branching_mode: "none" | "basic" | "advanced"
+        self.branching_mode = (branching_mode or "none").lower()
+        self.branching_model = None
+
+        if self.branching_mode in {"basic", "advanced"}:
+            if branching_model_path:
+                # Expect a pickled BranchingBasic / BranchingAdvanced instance
+                with open(branching_model_path, "rb") as f:
+                    self.branching_model = pickle.load(f)
+            elif original_log_path:
+                # Fit directly from the original log (XES/CSV)
+                if self.branching_mode == "basic":
+                    self.branching_model = BranchingBasic().fit_from_event_log(original_log_path)
+                else:
+                    self.branching_model = BranchingAdvanced().fit_from_event_log(original_log_path)
+
 
         self.default_case_attributes = case_attributes or {
             "RequestedAmount": 15000.0,
@@ -130,6 +153,7 @@ class SimulationEngine:
             "case_start_time": self.env.now,
             "previous_activity": "START",
             "event_nr": 0,
+            "history": [], # <-- New Context
             "case_attributes": case_attributes,
             "offer_info": {
                 "CreditScore": None,
@@ -151,7 +175,7 @@ class SimulationEngine:
                 print(f"Warning: {case_id} reached deadlock")
                 break
 
-            transition = self.choose_transition(enabled)
+            transition = self.choose_transition(enabled, marking=marking, case_context=case_context)
 
             # --- CHANGE: Process the transition logic inside fire_transition ---
             yield self.env.process(
@@ -175,8 +199,81 @@ class SimulationEngine:
                 return False
         return True
 
-    def choose_transition(self, enabled: Set[PetriNet.Transition]) -> PetriNet.Transition:
-        return random.choice(list(enabled))
+    def choose_transition(
+        self,
+        enabled: Set[PetriNet.Transition],
+        *,
+        marking: Optional[Marking] = None,
+        case_context: Optional[Dict] = None,
+        ) -> PetriNet.Transition:
+        """
+        Select which enabled transition to fire
+
+        Default: random choice
+
+        If a branching model is configured (Task 1.4), we only intervene when:
+        - at least two visible transitions (label not empty) are enabled,
+        - and we have a trace history in case_context.
+
+        Silent transitions (label None/"") are treated as routing and are only
+        chosen if no visible transition is enabled.
+        """
+        enabled_list = list(enabled)
+        if not enabled_list:
+            raise ValueError("enabled must be non-empty")
+
+        # Separate visible and silent transitions
+        visible = [t for t in enabled_list if t.label not in (None, "")]
+        silent = [t for t in enabled_list if t.label in (None, "")]
+
+        # If only routing is possible, keep prior behavior
+        if not visible:
+            return random.choice(silent) if silent else random.choice(enabled_list)
+
+        # If only one visible transition is possible, it is forced
+        if len(visible) == 1:
+            return visible[0]
+
+        # If no branching model configured, keep random behavior among visible
+        if self.branching_model is None or self.branching_mode == "none":
+            return random.choice(visible)
+
+        history = []
+        if case_context and "history" in case_context:
+            history = list(case_context["history"])
+
+        # Advanced: model chooses transition directly, using marking signatures
+        if (
+            self.branching_mode == "advanced"
+            and marking is not None
+            and hasattr(self.branching_model, "choose_transition")
+        ):
+            try:
+                return self.branching_model.choose_transition(
+                    enabled=visible,
+                    marking=marking,
+                    history=history,
+                    default_strategy="uniform",
+                )
+            except Exception:
+                return random.choice(visible)
+
+        # Basic: model chooses next activity label, then map to a transition
+        if self.branching_mode == "basic" and hasattr(self.branching_model, "choose_next"):
+            try:
+                enabled_labels = [str(t.label) for t in visible]
+                chosen_label = self.branching_model.choose_next(
+                    history=history,
+                    enabled_next=enabled_labels,
+                    default_strategy="uniform",
+                )
+                candidates = [t for t in visible if str(t.label) == str(chosen_label)]
+                return random.choice(candidates) if candidates else random.choice(visible)
+            except Exception:
+                return random.choice(visible)
+
+        return random.choice(visible)
+
 
     def fire_transition(
         self, case_id: str, transition: PetriNet.Transition, case_context: Dict
@@ -187,6 +284,9 @@ class SimulationEngine:
             return
 
         activity_name = transition.label
+
+        # Update history for branching
+        case_context.setdefault("history", []).append(activity_name)
 
         # 2. Calculate Processing Time FIRST (needed to book the resource)
         if self.use_advanced_model and self.quantile_models is not None:

@@ -15,3 +15,4 @@ simulation/spawner/DynamicSpawner2.py
 *.pkl
 *.json
 simulation_log.csv
+BPI Challenge 2017.xes

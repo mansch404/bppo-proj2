@@ -43,6 +43,7 @@ def main():
         net=net,
         initial_marking=initial_marking,
         final_marking=final_marking,
+        branching_mode="advanced", # "none" | "basic" | "advanced"
         event_log_path="simulation_log.csv", # This is where we WRITE new data
         use_advanced_model=True,
         resource_manager=resource_manager

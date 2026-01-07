@@ -4,9 +4,7 @@ import copy
 import math
 import numpy as np
 
-
 from datetime import timedelta, time, datetime
-
 from scipy.cluster.hierarchy import dendrogram, linkage, fcluster
 from sklearn.preprocessing import StandardScaler
 from utils.helper import transform_to_float, silvermans_rule

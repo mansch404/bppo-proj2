@@ -529,3 +529,7 @@ def _self_test() -> bool:
     if not dist:
         return False
     return abs(dist["X"] - 2/3) < 1e-6 and abs(dist["Y"] - 1/3) < 1e-6
+
+if __name__ == "__main__":
+    results = _self_test()
+    print(results)

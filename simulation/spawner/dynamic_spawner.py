@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from markdown_it.rules_block import reference
 from simulation.spawner.arrivals_segmentation import tune_sensitivity, extend_pattern, get_timeframe_years
 import pandas as pd
@@ -7,13 +8,13 @@ import pickle
 import copy
 import math
 from simulation.spawner.KDE_DataSimulator import KDE_DataSimulator
-from utils.helper import delta_timestamps_in_seconds, extract_timestamps_per_case, transform_to_float, get_inter_arrival_times_from_list_of_timestamps
+from utils.helper import delta_timestamps_in_seconds, extract_timestamps_per_case, transform_to_float, get_inter_arrival_times_from_list_of_timestamps, _read_event_log
 from scipy.stats import wasserstein_distance
 
 
 
 class DynamicSpawner_KDE():
-    def __init__(self, arrival_times, float_format=False):
+    def __init__(self, arrival_times=None, float_format=False):
         logging.basicConfig(level=logging.INFO, format='%(filename)s:%(lineno)d - %(message)s')
         self.logger = logging.getLogger(__name__)
         self.train_set = arrival_times.copy() # Train set or whole set
@@ -182,6 +183,13 @@ class DynamicSpawner_KDE():
         self.logger.info('Complete.')
         return simulated_data
 
+    def fit_with_event_log_path(self, path: str):
+        path = Path(path)
+        log = _read_event_log(path)
+        timestamps_list = extract_timestamps_per_case(log)
+        train, test = split_arrival_times(timestamps_list, threshold=0.8)
+
+        self.train_set = train.copy()
 
 
 def store_arrivals(self, sim_case_arrivals, start_time, end_time, train, test, logger, ref):
@@ -195,11 +203,6 @@ def store_arrivals(self, sim_case_arrivals, start_time, end_time, train, test, l
     logger.info(f"Number of reference arrivals: {len(sim_period)}")
 
     filename = f"simulated_arrivals_{ref}.csv"
-
-
-
-
-
 
 def evaluate_validation_performance(simulated_data, val_data):
     """
@@ -261,6 +264,8 @@ def clustered_arrival_table(arrival_times):
     df['Hour'] = df['Timestamp'].dt.hour
 
     return df
+
+
 
 if __name__ == '__main__':
     ## Testing ##

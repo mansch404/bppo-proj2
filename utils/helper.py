@@ -3,7 +3,10 @@ import pandas as pd
 import fitter
 import warnings
 import numpy as np
-from simulation.spawner.arrivals_segmentation import tune_sensitivity, extend_pattern, get_timeframe_years
+from pathlib import Path
+import pm4py
+import logging
+
 
 
 # Spawner helper functions
@@ -223,6 +226,7 @@ Setting bw = {}".format(
 
 
 def _setup_clustered_train_dict(train, prediction_start_t, prediction_end_t, verbose=None):
+    from simulation.spawner.arrivals_segmentation import tune_sensitivity, extend_pattern, get_timeframe_years
     """
     in:
         train: list[Timestamp]
@@ -283,3 +287,14 @@ def _setup_clustered_train_dict(train, prediction_start_t, prediction_end_t, ver
             # Create new entry
             clustered_train_dict[label] = corresponding_timestamps
     return output_df, clustered_train_dict
+
+def _read_event_log(path: Path) -> pd.DataFrame:
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+         return pd.read_csv(path)
+    if suffix == ".xes":
+        if pm4py is None:
+            raise ImportError("Could not read xes file, missing pm4py")
+        log = pm4py.read_xes(str(path))
+        return pm4py.convert_to_dataframe(log)
+    raise ValueError(f"Unsupported event log type: {path.suffix}")

@@ -1,9 +1,10 @@
+from pathlib import Path
+
 import pandas as pd
 import logging
 import pickle
 import scipy.stats as stats
-
-from utils.helper import delta_timestamps_in_seconds, find_best_fitting_distribution, extract_timestamps_per_case, _setup_clustered_train_dict
+from utils.helper import delta_timestamps_in_seconds, find_best_fitting_distribution, extract_timestamps_per_case, _setup_clustered_train_dict, _read_event_log
 from datetime import datetime, timedelta
 
 
@@ -22,6 +23,55 @@ class StaticSpawner:
             segmentation: use global segmentation for the event log [bool]
         Returns: None
         """
+
+        self.segmentation = segmentation
+        list_timestamps = extract_timestamps_per_case(event_log)
+
+
+        if segmentation:
+            start_date = timestamps_list[0].date()
+            end_date = timestamps_list[-1].date()
+            output_df, clustered_train_dict = _setup_clustered_train_dict(list_timestamps, start_date, end_date)
+
+            self.train_df_clustered = (
+                pd.Series(clustered_train_dict)  # index = cluster, values = list of dates
+                .explode()  # one row per (cluster, date)
+                .rename_axis("cluster")
+                .reset_index(name="date")
+                .sort_values("date", ignore_index=True)
+            )
+            best_dist = []
+
+            # Find the best fitting distribution for each found cluster
+            for cluster in range(len(self.train_df_clustered['cluster'].unique())):
+                current_deltas_seconds =  delta_timestamps_in_seconds(self.train_df_clustered[self.train_df_clustered['cluster'] == cluster]['date'])
+                current_best_dist = find_best_fitting_distribution(current_deltas_seconds)
+                best_dist.append(current_best_dist)
+
+            for i, best_d in enumerate(best_dist):
+                dist_name = list(best_d.keys())[0]
+                self.best_dist_name.append(dist_name)
+                self.best_params.append(best_d[dist_name])
+                self.dist_object.append(getattr(stats, dist_name))
+
+        # Find a fitting distribution for whole arrivals without segmentation.
+        else:
+            deltas_seconds = delta_timestamps_in_seconds(list_timestamps)
+            best_dist = find_best_fitting_distribution(deltas_seconds)
+
+            self.best_dist_name = list(best_dist.keys())[0]
+            self.best_params.append(best_dist[self.best_dist_name])
+            self.dist_object = getattr(stats, self.best_dist_name)
+
+            print(f"Best distribution: {self.best_dist_name}")
+
+    def fit_with_log_path(self, event_log_path, segmentation=False):
+        """
+        Args: event_log_path: Path to event log
+        """
+        # Read the event log from Path
+        path = Path(event_log_path)
+        event_log = _read_event_log(path)
 
         self.segmentation = segmentation
         list_timestamps = extract_timestamps_per_case(event_log)

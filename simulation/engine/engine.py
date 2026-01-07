@@ -15,6 +15,8 @@ from .logger import EventLogger
 
 from ..routing.branching_basic import BranchingBasic
 from ..routing.branching_advanced import BranchingAdvanced
+from ..spawner.dynamic_spawner import DynamicSpawner_KDE
+from ..spawner.static_distribution import StaticSpawner
 
 # Import inference functions from advanced_processing_time module
 try:
@@ -40,8 +42,12 @@ class SimulationEngine:
         branching_model_path: str = None,  # <--- NEW ARGUMENT
         case_attributes: Dict = None,
         simulation_start_datetime: datetime = None,
+        simulation_end_datetime: datetime = None,  # <--- New argument
         original_log_path: str = "",
-        resource_manager = None # <--- NEW ARGUMENT
+        resource_manager = None, # <--- NEW ARGUMENT
+        spawner = None, # <--- New argument
+        spawner_advanced: bool = False, # <--- New argument
+        list_of_arrivals = None # <--- New argument
     ):
         self.env = simpy.Environment()
         self.net = net
@@ -60,7 +66,26 @@ class SimulationEngine:
             2016, 1, 4, 8, 0, 0
         )
 
+        self.simulation_end_datetime = simulation_end_datetime or datetime(
+            2016, 6, 4, 20, 0, 0
+        )
+
         self.use_advanced_model = use_advanced_model
+
+        # Spawner (Task 1.2)
+        self.spawner_advanced = spawner_advanced # True if advanced approach
+        if self.spawner_advanced:
+            self.spawner = DynamicSpawner_KDE()
+            self.spawner.fit_with_event_log_path(original_log_path)
+        else:
+            self.spawner = StaticSpawner()
+            self.spawner.fit_with_log_path(original_log_path)
+
+
+
+        # Generate a list of arrivals (as datetimes) for the simulation
+        self.list_of_arrivals = self.spawner.generate_arrivals(simulation_start_datetime, simulation_end_datetime)
+
 
         # Branching (Task 1.4)
         # branching_mode: "none" | "basic" | "advanced"

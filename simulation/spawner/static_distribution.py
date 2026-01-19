@@ -25,13 +25,13 @@ class StaticSpawner:
         """
 
         self.segmentation = segmentation
-        list_timestamps = extract_timestamps_per_case(event_log)
+        timestamps_list = extract_timestamps_per_case(event_log)
 
 
         if segmentation:
             start_date = timestamps_list[0].date()
             end_date = timestamps_list[-1].date()
-            output_df, clustered_train_dict = _setup_clustered_train_dict(list_timestamps, start_date, end_date)
+            output_df, clustered_train_dict = _setup_clustered_train_dict(timestamps_list, start_date, end_date)
 
             self.train_df_clustered = (
                 pd.Series(clustered_train_dict)  # index = cluster, values = list of dates
@@ -56,7 +56,7 @@ class StaticSpawner:
 
         # Find a fitting distribution for whole arrivals without segmentation.
         else:
-            deltas_seconds = delta_timestamps_in_seconds(list_timestamps)
+            deltas_seconds = delta_timestamps_in_seconds(timestamps_list)
             best_dist = find_best_fitting_distribution(deltas_seconds)
 
             self.best_dist_name = list(best_dist.keys())[0]
@@ -78,8 +78,8 @@ class StaticSpawner:
 
 
         if segmentation:
-            start_date = timestamps_list[0].date()
-            end_date = timestamps_list[-1].date()
+            start_date = list_timestamps[0].date()
+            end_date = list_timestamps[-1].date()
             output_df, clustered_train_dict = _setup_clustered_train_dict(list_timestamps, start_date, end_date)
 
             self.train_df_clustered = (

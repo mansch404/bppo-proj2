@@ -102,7 +102,7 @@ class SimulationEngine:
                 if self.branching_mode == "basic":
                     self.branching_model = BranchingBasic().fit_from_event_log(original_log_path)
                 else:
-                    self.branching_model = BranchingAdvanced().fit_from_event_log(original_log_path)
+                    self.branching_model = BranchingAdvanced().fit_from_event_log(original_log_path, net, initial_marking)
 
 
         self.default_case_attributes = case_attributes or {

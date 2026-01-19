@@ -4,7 +4,7 @@ Run the business process simulation using Petri Net
 """
 
 import pm4py
-from engine import SimulationEngine
+from simulation.engine.engine import SimulationEngine
 from resource_manager import AdvancedResourceManager
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -13,10 +13,11 @@ def main():
     """Run simulation with Petri Net process model"""
 
     # 1. Setup Paths
+   # resource_manager = AdvancedResourceManager()
     script_dir = Path(__file__).parent
 
     bpmn_path = str(script_dir / "process_model.bpmn")
-    training_data_path = str(script_dir.parent / "data" / "BPI Challenge 2017.xes")
+    training_data_path = str(script_dir.parent / "data" / "bpi-chall.xes")
 
     # 2. Load Process Model (Structure)
     bpmn_graph = pm4py.read_bpmn(str(bpmn_path))
@@ -27,7 +28,7 @@ def main():
     # 3. Initialize & Train Resource Manager (The Brain)
     # set the start time for the NEW simulation
     sim_start = datetime(2017, 1, 1, 8, 0, 0)
-    sim_end = datetime(2017, 6, 1, 8, 0, 0) # Used for arrival generation in spawner class
+    sim_end = datetime(2017, 2, 1, 8, 0, 0) # Used for arrival generation in spawner class
 
     resource_manager = AdvancedResourceManager(simulation_start_time=sim_start)
 
@@ -45,7 +46,7 @@ def main():
         net=net,
         initial_marking=initial_marking,
         final_marking=final_marking,
-        branching_mode="advanced", # "none" | "basic" | "advanced"
+        branching_mode="basic", # "none" | "basic" | "advanced"
         event_log_path="simulation_log.csv", # This is where we WRITE new data
         simulation_start_datetime=sim_start,
         simulation_end_datetime=sim_end,
@@ -55,30 +56,42 @@ def main():
         spawner_advanced=False # True if advanced spawner is used, else static spawner
     )
 
-    # 5. Run Simulation
-    print("Spawning cases...")
-    for next_arrival in engine.list_of_arrivals: # <--- Changes spawner
-        delay_seconds = (next_arrival - sim_start).total_seconds()
-        engine.spawn_instance()
+    # 5. Register the Spawner Process
+    # CHANGE: iteration is managed by arrival_generator()
+    engine.env.process(arrival_generator(engine, sim_start))
 
-        # If the arrival is before the start time, skip or spawn immediately
-        if delay_seconds < 0:
-            continue
-
-        # Calculate how long to wait from NOW until that arrival
-        # env.now is the current simulation time in seconds
-        wait_duration = delay_seconds - engine.env.now
-        if wait_duration > 0:
-            yield engine.env.timeout(wait_duration)
-
-        # Spawn instance after delay
-        engine.spawn_instance()
-
+    # 6. Run Simulation
     # Calculate exact duration in seconds
     duration_seconds = (sim_end - sim_start).total_seconds()
 
     print("Running simulation...")
     engine.run(until=duration_seconds)
+
+# CHANGE
+def arrival_generator(engine, sim_start):
+    """
+    This process yields control to the environment to simulate waiting
+    between case arrivals.
+    """
+    print("Spawning process started...")
+
+    # Sort arrivals just in case they aren't sorted
+    sorted_arrivals = sorted(engine.list_of_arrivals)
+
+    for next_arrival in sorted_arrivals:
+        # Calculate when this arrival happens relative to simulation start
+        arrival_offset = (next_arrival - sim_start).total_seconds()
+
+        # Determine how long to wait from the CURRENT simulation time (env.now)
+        # env.now is usually 0 at the start
+        wait_duration = arrival_offset - engine.env.now
+
+        if wait_duration > 0:
+            # This 'yield' tells the engine: "Pause this function for X seconds"
+            yield engine.env.timeout(wait_duration)
+
+        # Spawn the instance
+        engine.spawn_instance()
 
 
 if __name__ == "__main__":

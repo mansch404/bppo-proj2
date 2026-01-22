@@ -17,7 +17,7 @@ This module implements an advanced branching predictor that:
    The default classifier is Multinomial Naive Bayes in log-space (no external ML deps).
 
 Integration intent
-- Your SimulationEngine.choose_transition(...) currently selects a random enabled transition. fileciteturn2file15
+- Your SimulationEngine.choose_transition(...) currently selects a random enabled transition.
   To use this module, call BranchingAdvanced.choose_transition(...) instead and pass:
       - the current enabled transitions
       - the current marking (for decision-point keying)
@@ -25,9 +25,9 @@ Integration intent
 
 Notes
 - This module is designed to be "engine-friendly" but does not import the engine to avoid cycles.
-- It expects pm4py PetriNet + Marking objects (same as your engine). fileciteturn2file16
+- It expects pm4py PetriNet + Marking objects (same as your engine).
 - The EventLogger writes start/complete, but fitting defaults to complete-only, consistent
-  with branching_basic. fileciteturn2file0
+  with branching_basic.
 """
 
 from __future__ import annotations

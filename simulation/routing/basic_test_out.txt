@@ -1,0 +1,826 @@
+[LOAD] Converting log to dataframe
+[LOAD] Dataframe shape: (1202267, 19)
+[LOAD] Dataframe columns: ['Action', 'org:resource', 'concept:name', 'EventOrigin', 'EventID', 'lifecycle:transition', 'time:timestamp', 'case:LoanGoal', 'case:ApplicationType', 'case:concept:name', 'case:RequestedAmount', 'FirstWithdrawalAmount', 'NumberOfTerms', 'Accepted', 'MonthlyCost', 'Selected', 'CreditScore', 'OfferedAmount', 'OfferID']
+[LOAD] Head of dataframe:
+        Action org:resource            concept:name  ... CreditScore OfferedAmount OfferID
+0      Created       User_1    A_Create Application  ...         NaN           NaN     NaN
+1  statechange       User_1             A_Submitted  ...         NaN           NaN     NaN
+2      Created       User_1          W_Handle leads  ...         NaN           NaN     NaN
+3      Deleted       User_1          W_Handle leads  ...         NaN           NaN     NaN
+4      Created       User_1  W_Complete application  ...         NaN           NaN     NaN
+
+[5 rows x 19 columns]
+
+[STATS] Basic log statistics
+[STATS] Number of cases: 31509
+[STATS] Number of events: 1202267
+[STATS] Number of unique activities: 26
+[STATS] Most frequent activities:
+concept:name
+W_Validate application      209496
+W_Call after offers         191092
+W_Call incomplete files     168529
+W_Complete application      148900
+W_Handle leads               47264
+O_Create Offer               42995
+O_Created                    42995
+O_Sent (mail and online)     39707
+A_Validating                 38816
+A_Create Application         31509
+Name: count, dtype: int64
+
+[MODEL] Initializing BranchingBasic
+[MODEL] Fitting model from dataframe
+[MODEL] Model fitting complete
+
+[INSPECT] Inspecting XOR-style branching decisions
+
+[CASE] Application_652823628
+[TRACE] Activities: ['A_Create Application', 'A_Submitted', 'W_Handle leads', 'W_Handle leads', 'W_Complete application', 'A_Concept', 'W_Complete application', 'W_Complete application', 'A_Accepted', 'O_Create Offer', 'O_Created', 'O_Sent (mail and online)', 'W_Complete application', 'W_Call after offers', 'W_Call after offers', 'A_Complete', 'W_Call after offers', 'W_Call after offers', 'W_Call after offers', 'W_Call after offers', 'W_Validate application', 'W_Validate application', 'A_Validating', 'O_Returned', 'W_Validate application', 'W_Validate application', 'W_Call incomplete files', 'W_Call incomplete files', 'A_Incomplete', 'W_Call incomplete files', 'W_Call incomplete files', 'W_Call incomplete files', 'W_Call incomplete files', 'W_Validate application', 'W_Validate application', 'A_Validating', 'W_Validate application', 'O_Accepted', 'A_Pending', 'W_Validate application']
+
+[QUERY]
+  history = ['A_Create Application']
+  enabled_next = ['A_Submitted']
+[RESULT] distribution = {'A_Submitted': 1.0}
+
+[QUERY]
+  history = ['A_Submitted']
+  enabled_next = ['W_Handle leads']
+[RESULT] distribution = {'W_Handle leads': 1.0}
+
+[QUERY]
+  history = ['W_Handle leads']
+  enabled_next = ['W_Handle leads']
+[RESULT] distribution = {'W_Handle leads': 1.0}
+
+[QUERY]
+  history = ['W_Handle leads']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['A_Concept']
+[RESULT] distribution = {'A_Concept': 1.0}
+
+[QUERY]
+  history = ['A_Concept']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['A_Accepted']
+[RESULT] distribution = {'A_Accepted': 1.0}
+
+[QUERY]
+  history = ['A_Accepted']
+  enabled_next = ['O_Create Offer']
+[RESULT] distribution = {'O_Create Offer': 1.0}
+
+[QUERY]
+  history = ['O_Create Offer']
+  enabled_next = ['O_Created']
+[RESULT] distribution = {'O_Created': 1.0}
+
+[QUERY]
+  history = ['O_Created']
+  enabled_next = ['O_Sent (mail and online)']
+[RESULT] distribution = {'O_Sent (mail and online)': 1.0}
+
+[QUERY]
+  history = ['O_Sent (mail and online)']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['A_Complete']
+[RESULT] distribution = {'A_Complete': 1.0}
+
+[QUERY]
+  history = ['A_Complete']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['A_Validating']
+[RESULT] distribution = {'A_Validating': 1.0}
+
+[QUERY]
+  history = ['A_Validating']
+  enabled_next = ['O_Returned']
+[RESULT] distribution = {'O_Returned': 1.0}
+
+[QUERY]
+  history = ['O_Returned']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['A_Incomplete']
+[RESULT] distribution = {'A_Incomplete': 1.0}
+
+[QUERY]
+  history = ['A_Incomplete']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['A_Validating']
+[RESULT] distribution = {'A_Validating': 1.0}
+
+[QUERY]
+  history = ['A_Validating']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['O_Accepted']
+[RESULT] distribution = {'O_Accepted': 1.0}
+
+[QUERY]
+  history = ['O_Accepted']
+  enabled_next = ['A_Pending']
+[RESULT] distribution = {'A_Pending': 1.0}
+
+[QUERY]
+  history = ['A_Pending']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[CASE] Application_1691306052
+[TRACE] Activities: ['A_Create Application', 'A_Submitted', 'W_Handle leads', 'W_Handle leads', 'W_Complete application', 'A_Concept', 'W_Complete application', 'W_Complete application', 'W_Complete application', 'A_Accepted', 'O_Create Offer', 'O_Created', 'O_Sent (mail and online)', 'W_Complete application', 'W_Call after offers', 'W_Call after offers', 'A_Complete', 'W_Call after offers', 'W_Call after offers', 'W_Call after offers', 'W_Call after offers', 'W_Validate application', 'W_Validate application', 'A_Validating', 'W_Validate application', 'W_Validate application', 'W_Validate application', 'W_Validate application', 'A_Denied', 'O_Refused', 'W_Validate application']
+
+[QUERY]
+  history = ['A_Create Application']
+  enabled_next = ['A_Submitted']
+[RESULT] distribution = {'A_Submitted': 1.0}
+
+[QUERY]
+  history = ['A_Submitted']
+  enabled_next = ['W_Handle leads']
+[RESULT] distribution = {'W_Handle leads': 1.0}
+
+[QUERY]
+  history = ['W_Handle leads']
+  enabled_next = ['W_Handle leads']
+[RESULT] distribution = {'W_Handle leads': 1.0}
+
+[QUERY]
+  history = ['W_Handle leads']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['A_Concept']
+[RESULT] distribution = {'A_Concept': 1.0}
+
+[QUERY]
+  history = ['A_Concept']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['A_Accepted']
+[RESULT] distribution = {'A_Accepted': 1.0}
+
+[QUERY]
+  history = ['A_Accepted']
+  enabled_next = ['O_Create Offer']
+[RESULT] distribution = {'O_Create Offer': 1.0}
+
+[QUERY]
+  history = ['O_Create Offer']
+  enabled_next = ['O_Created']
+[RESULT] distribution = {'O_Created': 1.0}
+
+[QUERY]
+  history = ['O_Created']
+  enabled_next = ['O_Sent (mail and online)']
+[RESULT] distribution = {'O_Sent (mail and online)': 1.0}
+
+[QUERY]
+  history = ['O_Sent (mail and online)']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['A_Complete']
+[RESULT] distribution = {'A_Complete': 1.0}
+
+[QUERY]
+  history = ['A_Complete']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['A_Validating']
+[RESULT] distribution = {'A_Validating': 1.0}
+
+[QUERY]
+  history = ['A_Validating']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['A_Denied']
+[RESULT] distribution = {'A_Denied': 1.0}
+
+[QUERY]
+  history = ['A_Denied']
+  enabled_next = ['O_Refused']
+[RESULT] distribution = {'O_Refused': 1.0}
+
+[QUERY]
+  history = ['O_Refused']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[CASE] Application_428409768
+[TRACE] Activities: ['A_Create Application', 'A_Submitted', 'W_Handle leads', 'W_Handle leads', 'W_Complete application', 'A_Concept', 'W_Complete application', 'A_Accepted', 'O_Create Offer', 'O_Created', 'O_Sent (mail and online)', 'W_Complete application', 'W_Call after offers', 'W_Call after offers', 'A_Complete', 'W_Call after offers', 'O_Create Offer', 'O_Created', 'O_Cancelled', 'O_Sent (mail and online)', 'W_Call after offers', 'W_Call after offers', 'W_Call after offers', 'W_Validate application', 'W_Validate application', 'A_Validating', 'O_Returned', 'W_Validate application', 'W_Validate application', 'W_Call incomplete files', 'W_Call incomplete files', 'A_Incomplete', 'W_Call incomplete files', 'W_Call incomplete files', 'W_Call incomplete files', 'W_Call incomplete files', 'W_Call incomplete files', 'W_Call incomplete files', 'W_Validate application', 'W_Validate application', 'A_Validating', 'W_Validate application', 'O_Accepted', 'A_Pending', 'W_Validate application']
+
+[QUERY]
+  history = ['A_Create Application']
+  enabled_next = ['A_Submitted']
+[RESULT] distribution = {'A_Submitted': 1.0}
+
+[QUERY]
+  history = ['A_Submitted']
+  enabled_next = ['W_Handle leads']
+[RESULT] distribution = {'W_Handle leads': 1.0}
+
+[QUERY]
+  history = ['W_Handle leads']
+  enabled_next = ['W_Handle leads']
+[RESULT] distribution = {'W_Handle leads': 1.0}
+
+[QUERY]
+  history = ['W_Handle leads']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['A_Concept']
+[RESULT] distribution = {'A_Concept': 1.0}
+
+[QUERY]
+  history = ['A_Concept']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['A_Accepted']
+[RESULT] distribution = {'A_Accepted': 1.0}
+
+[QUERY]
+  history = ['A_Accepted']
+  enabled_next = ['O_Create Offer']
+[RESULT] distribution = {'O_Create Offer': 1.0}
+
+[QUERY]
+  history = ['O_Create Offer']
+  enabled_next = ['O_Created']
+[RESULT] distribution = {'O_Created': 1.0}
+
+[QUERY]
+  history = ['O_Created']
+  enabled_next = ['O_Sent (mail and online)']
+[RESULT] distribution = {'O_Sent (mail and online)': 1.0}
+
+[QUERY]
+  history = ['O_Sent (mail and online)']
+  enabled_next = ['W_Complete application']
+[RESULT] distribution = {'W_Complete application': 1.0}
+
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['A_Complete']
+[RESULT] distribution = {'A_Complete': 1.0}
+
+[QUERY]
+  history = ['A_Complete']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['O_Create Offer']
+[RESULT] distribution = {'O_Create Offer': 1.0}
+
+[QUERY]
+  history = ['O_Create Offer']
+  enabled_next = ['O_Created']
+[RESULT] distribution = {'O_Created': 1.0}
+
+[QUERY]
+  history = ['O_Created']
+  enabled_next = ['O_Cancelled']
+[RESULT] distribution = {'O_Cancelled': 1.0}
+
+[QUERY]
+  history = ['O_Cancelled']
+  enabled_next = ['O_Sent (mail and online)']
+[RESULT] distribution = {'O_Sent (mail and online)': 1.0}
+
+[QUERY]
+  history = ['O_Sent (mail and online)']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Call after offers']
+[RESULT] distribution = {'W_Call after offers': 1.0}
+
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['A_Validating']
+[RESULT] distribution = {'A_Validating': 1.0}
+
+[QUERY]
+  history = ['A_Validating']
+  enabled_next = ['O_Returned']
+[RESULT] distribution = {'O_Returned': 1.0}
+
+[QUERY]
+  history = ['O_Returned']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['A_Incomplete']
+[RESULT] distribution = {'A_Incomplete': 1.0}
+
+[QUERY]
+  history = ['A_Incomplete']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Call incomplete files']
+[RESULT] distribution = {'W_Call incomplete files': 1.0}
+
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['A_Validating']
+[RESULT] distribution = {'A_Validating': 1.0}
+
+[QUERY]
+  history = ['A_Validating']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next = ['O_Accepted']
+[RESULT] distribution = {'O_Accepted': 1.0}
+
+[QUERY]
+  history = ['O_Accepted']
+  enabled_next = ['A_Pending']
+[RESULT] distribution = {'A_Pending': 1.0}
+
+[QUERY]
+  history = ['A_Pending']
+  enabled_next = ['W_Validate application']
+[RESULT] distribution = {'W_Validate application': 1.0}
+
+[INSPECT] Inspecting most common branching points
+
+[ACTIVITY] W_Validate application
+[QUERY]
+  history = ['W_Validate application']
+  enabled_next (sample size) = 25
+[RESULT] distribution (truncated):
+  A_Incomplete -> 0.9137098822931663
+  A_Denied -> 0.004149377593360996
+  O_Cancelled -> 0.07528156490812093
+  W_Assess potential fraud -> 0.006181725802354137
+  A_Validating -> 0.0005080870522482852
+  O_Accepted -> 8.46811753747142e-05
+  O_Returned -> 8.46811753747142e-05
+
+[ACTIVITY] W_Call after offers
+[QUERY]
+  history = ['W_Call after offers']
+  enabled_next (sample size) = 25
+[RESULT] distribution (truncated):
+  A_Validating -> 1.0
+
+[ACTIVITY] W_Call incomplete files
+[QUERY]
+  history = ['W_Call incomplete files']
+  enabled_next (sample size) = 25
+[RESULT] distribution (truncated):
+  A_Validating -> 0.9875115633672524
+  O_Cancelled -> 0.008325624421831636
+  W_Assess potential fraud -> 0.003237742830712303
+  A_Denied -> 0.0009250693802035152
+
+[ACTIVITY] W_Complete application
+[QUERY]
+  history = ['W_Complete application']
+  enabled_next (sample size) = 25
+[RESULT] distribution (truncated):
+  A_Complete -> 0.9995273357491729
+  W_Assess potential fraud -> 0.00031510950055144165
+  A_Accepted -> 0.00010503650018381388
+  O_Create Offer -> 5.251825009190694e-05
+
+[ACTIVITY] W_Handle leads
+[QUERY]
+  history = ['W_Handle leads']
+  enabled_next (sample size) = 25
+[RESULT] distribution (truncated):
+  A_Concept -> 1.0
+
+[INSPECT] Detecting XOR branching points automatically
+[INFO] XOR candidates found: 23
+
+[BRANCH POINT]
+  Activity: A_Accepted
+  Enabled successors: ['O_Create Offer', 'W_Complete application', 'W_Shortened completion ']
+  [SKIP] Degenerate distribution
+
+[BRANCH POINT]
+  Activity: A_Cancelled
+  Enabled successors: ['O_Cancelled', 'W_Complete application', 'W_Call incomplete files', 'W_Call after offers', 'W_Validate application']
+  [SKIP] Degenerate distribution
+
+[BRANCH POINT]
+  Activity: A_Complete
+  Enabled successors: ['W_Call after offers', 'O_Create Offer', 'O_Cancelled', 'A_Cancelled', 'A_Denied', 'W_Shortened completion ', 'O_Sent (mail and online)', 'O_Sent (online only)']
+  [DISTRIBUTION]
+    A_Cancelled -> 0.6184
+    O_Create Offer -> 0.3183
+    O_Cancelled -> 0.0362
+    W_Call after offers -> 0.0155
+
+[BRANCH POINT]
+  Activity: A_Concept
+  Enabled successors: ['W_Complete application', 'A_Accepted', 'W_Shortened completion ']
+  [SKIP] Degenerate distribution
+
+[BRANCH POINT]
+  Activity: A_Create Application
+  Enabled successors: ['A_Submitted', 'W_Complete application', 'A_Concept']
+  [DISTRIBUTION]
+    A_Submitted -> 0.6482
+    A_Concept -> 0.3518
+
+[BRANCH POINT]
+  Activity: A_Denied
+  Enabled successors: ['O_Refused', 'W_Complete application', 'W_Call after offers', 'W_Validate application', 'W_Call incomplete files']
+  [SKIP] Degenerate distribution
+
+[BRANCH POINT]
+  Activity: A_Incomplete
+  Enabled successors: ['W_Call incomplete files', 'O_Returned', 'O_Accepted', 'A_Denied', 'O_Create Offer', 'W_Shortened completion ']
+  [DISTRIBUTION]
+    O_Accepted -> 0.4832
+    W_Call incomplete files -> 0.2075
+    O_Create Offer -> 0.1722
+    O_Returned -> 0.118
+    A_Denied -> 0.0191
+
+[BRANCH POINT]
+  Activity: A_Pending
+  Enabled successors: ['W_Validate application', 'W_Call incomplete files', 'W_Call after offers']
+  [DISTRIBUTION]
+    W_Validate application -> 0.9827
+    W_Call incomplete files -> 0.0173
+
+[BRANCH POINT]
+  Activity: A_Validating
+  Enabled successors: ['O_Returned', 'W_Validate application', 'O_Accepted', 'A_Cancelled', 'A_Denied', 'O_Create Offer']
+  [DISTRIBUTION]
+    O_Returned -> 0.6272
+    O_Accepted -> 0.2078
+    W_Validate application -> 0.1307
+    A_Denied -> 0.0319
+
+[BRANCH POINT]
+  Activity: O_Cancelled
+  Enabled successors: ['W_Call after offers', 'O_Create Offer', 'W_Call incomplete files', 'O_Sent (mail and online)', 'W_Complete application', 'W_Validate application', 'A_Denied', 'A_Cancelled', 'O_Sent (online only)', 'W_Shortened completion ', 'O_Returned', 'O_Accepted']
+  [DISTRIBUTION]
+    O_Create Offer -> 0.3646
+    W_Call incomplete files -> 0.2412
+    O_Sent (mail and online) -> 0.1637
+    A_Cancelled -> 0.1259
+    W_Call after offers -> 0.0484
+    W_Complete application -> 0.0189
+    A_Denied -> 0.016
+    W_Validate application -> 0.0131
+
+[BRANCH POINT]
+  Activity: O_Created
+  Enabled successors: ['O_Sent (mail and online)', 'O_Cancelled', 'O_Create Offer', 'O_Sent (online only)', 'W_Complete application', 'A_Cancelled', 'W_Call after offers', 'W_Validate application', 'W_Call incomplete files', 'A_Denied', 'W_Shortened completion ']
+  [DISTRIBUTION]
+    O_Sent (mail and online) -> 0.8431
+    O_Create Offer -> 0.0911
+    O_Sent (online only) -> 0.0447
+    O_Cancelled -> 0.0177
+
+[BRANCH POINT]
+  Activity: O_Refused
+  Enabled successors: ['W_Validate application', 'W_Assess potential fraud', 'W_Call incomplete files', 'W_Call after offers', 'W_Complete application']
+  [DISTRIBUTION]
+    W_Validate application -> 0.8893
+    W_Assess potential fraud -> 0.0534
+    W_Call incomplete files -> 0.039
+    W_Call after offers -> 0.0109
+
+[BRANCH POINT]
+  Activity: O_Returned
+  Enabled successors: ['W_Validate application', 'W_Call incomplete files', 'O_Accepted', 'A_Denied', 'A_Cancelled', 'O_Create Offer', 'W_Call after offers', 'O_Cancelled']
+  [DISTRIBUTION]
+    W_Validate application -> 0.4518
+    O_Accepted -> 0.3754
+    A_Denied -> 0.1557
+
+[BRANCH POINT]
+  Activity: O_Sent (mail and online)
+  Enabled successors: ['W_Complete application', 'A_Cancelled', 'W_Call after offers', 'W_Call incomplete files', 'O_Create Offer', 'O_Cancelled', 'O_Returned', 'W_Validate application', 'O_Accepted', 'A_Denied', 'O_Sent (online only)']
+  [DISTRIBUTION]
+    W_Complete application -> 0.8858
+    A_Cancelled -> 0.0492
+    O_Create Offer -> 0.032
+    O_Cancelled -> 0.0183
+    O_Returned -> 0.0119
+
+[BRANCH POINT]
+  Activity: O_Sent (online only)
+  Enabled successors: ['O_Create Offer', 'W_Call incomplete files', 'W_Complete application', 'O_Returned', 'W_Call after offers', 'O_Cancelled', 'W_Validate application', 'A_Cancelled', 'O_Sent (mail and online)', 'A_Denied', 'O_Accepted']
+  [DISTRIBUTION]
+    W_Complete application -> 0.3464
+    O_Returned -> 0.2813
+    O_Create Offer -> 0.1593
+    A_Cancelled -> 0.1386
+    O_Cancelled -> 0.0321
+    W_Call incomplete files -> 0.0186
+
+[BRANCH POINT]
+  Activity: W_Assess potential fraud
+  Enabled successors: ['A_Denied', 'W_Validate application', 'W_Handle leads', 'W_Call after offers', 'W_Complete application']
+  [DISTRIBUTION]
+    A_Denied -> 0.4141
+    W_Validate application -> 0.3838
+    W_Handle leads -> 0.1717
+    W_Call after offers -> 0.0202
+    W_Complete application -> 0.0101
+
+[BRANCH POINT]
+  Activity: W_Call after offers
+  Enabled successors: ['A_Complete', 'A_Cancelled', 'W_Validate application', 'O_Create Offer', 'O_Sent (mail and online)', 'A_Denied', 'O_Cancelled', 'W_Shortened completion ', 'W_Assess potential fraud', 'O_Accepted', 'O_Returned']
+  [DISTRIBUTION]
+    O_Create Offer -> 0.2089
+    O_Sent (mail and online) -> 0.1929
+    A_Complete -> 0.1524
+    O_Returned -> 0.1132
+    O_Cancelled -> 0.1015
+    O_Accepted -> 0.0837
+    W_Validate application -> 0.077
+    A_Cancelled -> 0.0507
+    A_Denied -> 0.0182
+
+[BRANCH POINT]
+  Activity: W_Call incomplete files
+  Enabled successors: ['A_Incomplete', 'W_Validate application', 'O_Accepted', 'O_Create Offer', 'O_Returned', 'A_Cancelled', 'O_Cancelled', 'A_Denied', 'W_Assess potential fraud', 'W_Call after offers', 'O_Sent (online only)', 'O_Sent (mail and online)', 'W_Personal Loan collection']
+  [DISTRIBUTION]
+    O_Cancelled -> 0.6667
+    W_Assess potential fraud -> 0.2593
+    A_Denied -> 0.0741
+
+[BRANCH POINT]
+  Activity: W_Complete application
+  Enabled successors: ['A_Concept', 'A_Accepted', 'W_Call after offers', 'A_Cancelled', 'O_Create Offer', 'O_Sent (mail and online)', 'O_Sent (online only)', 'A_Denied', 'W_Shortened completion ', 'O_Cancelled', 'W_Assess potential fraud']
+  [DISTRIBUTION]
+    W_Assess potential fraud -> 0.6667
+    A_Accepted -> 0.2222
+    O_Create Offer -> 0.1111
+
+[END] Exploratory testing completed

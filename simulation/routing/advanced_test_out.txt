@@ -1,0 +1,98 @@
+
+[START] BPIC-17 BranchingAdvanced exploratory testing
+
+[LOAD] Loading BPIC-17 XES log
+/Users/manueljulianasbeck/anaconda3/lib/python3.10/site-packages/pm4py/utils.py:991: UserWarning: Install the optional requirement `rustxes` to import/export files faster.
+  warnings.warn("Install the optional requirement `rustxes` to import/export files faster.")
+/Users/manueljulianasbeck/anaconda3/lib/python3.10/site-packages/pm4py/util/dt_parsing/parser.py:82: UserWarning: ISO8601 strings are not fully supported with strpfromiso for Python versions below 3.11
+  warnings.warn(
+parsing log, completed traces :: 100%|██████████████████████████| 31509/31509 [00:28<00:00, 1088.57it/s]
+[LOAD] Converting log to dataframe
+[LOAD] Dataframe shape: (1202267, 19)
+[LOAD] Dataframe columns: ['Action', 'org:resource', 'concept:name', 'EventOrigin', 'EventID', 'lifecycle:transition', 'time:timestamp', 'case:LoanGoal', 'case:ApplicationType', 'case:concept:name', 'case:RequestedAmount', 'FirstWithdrawalAmount', 'NumberOfTerms', 'Accepted', 'MonthlyCost', 'Selected', 'CreditScore', 'OfferedAmount', 'OfferID']
+[LOAD] Head of dataframe:
+        Action org:resource            concept:name  ... CreditScore OfferedAmount OfferID
+0      Created       User_1    A_Create Application  ...         NaN           NaN     NaN
+1  statechange       User_1             A_Submitted  ...         NaN           NaN     NaN
+2      Created       User_1          W_Handle leads  ...         NaN           NaN     NaN
+3      Deleted       User_1          W_Handle leads  ...         NaN           NaN     NaN
+4      Created       User_1  W_Complete application  ...         NaN           NaN     NaN
+
+[5 rows x 19 columns]
+
+[STATS] Basic log statistics
+[STATS] Number of cases: 31509
+[STATS] Number of events: 1202267
+[STATS] Unique activities: 26
+[STATS] Top 10 activities:
+concept:name
+W_Validate application      209496
+W_Call after offers         191092
+W_Call incomplete files     168529
+W_Complete application      148900
+W_Handle leads               47264
+O_Create Offer               42995
+O_Created                    42995
+O_Sent (mail and online)     39707
+A_Validating                 38816
+A_Create Application         31509
+Name: count, dtype: int64
+[STATS] Unique resources: 149
+
+[DISCOVER] Discovering Petri net with Inductive Miner
+[DISCOVER] Net elements: places = 55 | transitions = 87 | arcs = 184
+[DISCOVER] Initial marking tokens: 1
+[DISCOVER] Final marking tokens: 1
+
+[MODEL] Initializing BranchingAdvanced
+[MODEL] Fitting model from dataframe using token replay
+[MODEL] Model fitting complete
+
+[MODEL] Overview
+[MODEL] Decision points learned: 2
+[MODEL] Feature vocabulary size: 0
+[MODEL] Top 2 decision points by training examples:
+  - examples = 11086 | enabled = ['A_Accepted', 'A_Concept', 'W_Assess potential fraud', 'W_Handle leads'] | marking_sig = (('p_12', 1), ('p_18', 1), ('p_6', 1), ('p_8', 1))
+  - examples = 11084 | enabled = ['A_Accepted', 'W_Assess potential fraud', 'W_Handle leads'] | marking_sig = (('p_12', 1), ('p_18', 1), ('p_6', 1), ('p_9', 1))
+
+[INSPECT] Inspecting decision points via replay (sample cases)
+
+[CASE] 1 / 3 | case_id = trace_1 | events = 10
+  [INFO] No decision points found in this case.
+
+[CASE] 2 / 3 | case_id = trace_2 | events = 13
+  [INFO] No decision points found in this case.
+
+[CASE] 3 / 3 | case_id = trace_3 | events = 10
+  [INFO] No decision points found in this case.
+
+[INSPECT] Inspecting global decision-point examples (across log)
+
+  [EXAMPLE]
+   marking_sig: (('p_12', 1), ('p_18', 1), ('p_6', 1), ('p_9', 1))
+   enabled: ['A_Accepted', 'W_Assess potential fraud', 'W_Handle leads']
+   history_tail: ['A_Create Application', 'A_Concept', 'W_Assess potential fraud']
+   actual_next: A_Accepted
+   [DISTRIBUTION]
+     W_Handle leads -> 0.6041
+     W_Assess potential fraud -> 0.3959
+
+  [EXAMPLE]
+   marking_sig: (('p_12', 1), ('p_18', 1), ('p_6', 1), ('p_9', 1))
+   enabled: ['A_Accepted', 'W_Assess potential fraud', 'W_Handle leads']
+   history_tail: ['A_Create Application', 'A_Concept', 'W_Assess potential fraud']
+   actual_next: A_Accepted
+   [DISTRIBUTION]
+     W_Handle leads -> 0.6041
+     W_Assess potential fraud -> 0.3959
+
+  [EXAMPLE]
+   marking_sig: (('p_12', 1), ('p_18', 1), ('p_6', 1), ('p_9', 1))
+   enabled: ['A_Accepted', 'W_Assess potential fraud', 'W_Handle leads']
+   history_tail: ['A_Create Application', 'A_Concept', 'W_Assess potential fraud']
+   actual_next: A_Accepted
+   [DISTRIBUTION]
+     W_Handle leads -> 0.6041
+     W_Assess potential fraud -> 0.3959
+
+[END] Exploratory testing completed

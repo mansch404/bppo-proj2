@@ -193,7 +193,7 @@ class BranchingAdvanced:
       selects one enabled transition (or label) using the learned classifier.
 
     Compared to BranchingBasic, this is more aligned with the assignment's
-    advanced requirement because it uses token replay to identify decision points. fileciteturn2file14
+    advanced requirement because it uses token replay to identify decision points.
     """
 
     def __init__(

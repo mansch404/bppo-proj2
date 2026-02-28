@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import pm4py
 from datetime import datetime
-from resource_manager import AdvancedResourceManager, RandomPlanner, GreedyPlanner, AdvancedOptimizationPlanner
+from resource_manager import AdvancedResourceManager, RandomPlanner, AdvancedOptimizationPlanner
 
 
 def extract_tasks_from_log(df, num_cases=100):
@@ -30,7 +30,7 @@ class FullDataEvaluator:
         self.manager = manager
 
     def run_full_evaluation(self, tasks):
-        for name, planner in [("Random", RandomPlanner()), ("Greedy", GreedyPlanner()),
+        for name, planner in [("Random", RandomPlanner()),
                               ("Advanced", AdvancedOptimizationPlanner())]:
             self.manager.strategy, self.manager.busy_until, self.manager.daily_work_seconds, self.manager.last_activity = planner, {}, {}, {}
             results = []

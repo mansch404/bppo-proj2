@@ -330,7 +330,7 @@ class SimulationEngine:
                 # Ask manager: "Can anyone do 'activity_name' right now?"
                 resource = self.resource_manager.request_resource(
                     activity=activity_name,
-                    current_sim_time=self.env.now,
+                    sim_time=self.env.now,
                     duration=processing_time
                 )
 

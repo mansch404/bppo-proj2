@@ -9,6 +9,9 @@ from resource_manager import AdvancedResourceManager
 from pathlib import Path
 from datetime import datetime, timedelta
 
+from simulation.resource_manager.resource_manager import AdvancedOptimizationPlanner
+
+
 def main():
     """Run simulation with Petri Net process model"""
 
@@ -30,7 +33,8 @@ def main():
     sim_start = datetime(2017, 1, 1, 8, 0, 0)
     sim_end = datetime(2017, 2, 1, 8, 0, 0) # Used for arrival generation in spawner class
 
-    resource_manager = AdvancedResourceManager(simulation_start_time=sim_start)
+    chosen_strategy = AdvancedOptimizationPlanner()
+    resource_manager = AdvancedResourceManager(simulation_start_time=sim_start, strategy=chosen_strategy)
 
     print(f"Training Resource Manager on {training_data_path}...")
     try:

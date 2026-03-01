@@ -9,7 +9,10 @@ from resource_manager import AdvancedResourceManager
 from pathlib import Path
 from datetime import datetime, timedelta
 
-from simulation.resource_manager.resource_manager import AdvancedOptimizationPlanner
+from simulation.resource_manager.resource_manager import (
+    AdvancedResourceManager,
+    AdvancedOptimizationPlanner
+)
 
 
 def main():
@@ -36,13 +39,11 @@ def main():
     chosen_strategy = AdvancedOptimizationPlanner()
     resource_manager = AdvancedResourceManager(simulation_start_time=sim_start, strategy=chosen_strategy)
 
-    print(f"Training Resource Manager on {training_data_path}...")
-    try:
-        resource_manager.load_log_and_mine_profiles(training_data_path)
-    except Exception as e:
-        print(f"CRITICAL ERROR: Could not train on BPI data: {e}")
-        print("Please ensure 'BPI Challenge 2017.xes' is in the project folder.")
-        return
+    log = pm4py.read_xes(training_data_path)
+    df = pm4py.convert_to_dataframe(log)
+
+    print("Trainiere Organizational Model (K-Means & Heatmaps)...")
+    resource_manager.mine_organizational_model(df)
 
 
     # 4. Initialize Simulation Engine (The Machine)

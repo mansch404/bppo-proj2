@@ -331,7 +331,9 @@ class SimulationEngine:
                 resource = self.resource_manager.request_resource(
                     activity=activity_name,
                     sim_time=self.env.now,
-                    duration=processing_time
+                    duration=processing_time,
+                    case_id=case_id,  # important for CaseHandlingPlanner
+                    amount=case_context["case_attributes"].get("RequestedAmount", 0)  #for Advanced Matcher
                 )
 
                 if resource is None:

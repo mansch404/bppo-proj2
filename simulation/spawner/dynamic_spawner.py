@@ -17,7 +17,7 @@ class DynamicSpawner_KDE():
     def __init__(self, arrival_times=None, float_format=False):
         logging.basicConfig(level=logging.INFO, format='%(filename)s:%(lineno)d - %(message)s')
         self.logger = logging.getLogger(__name__)
-        if self.train_set != None:
+        if arrival_times != None:
             self.train_set = arrival_times.copy()  # Train set or whole set
         self.float_format = float_format
 

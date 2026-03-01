@@ -33,8 +33,8 @@ def main():
 
     # 3. Initialize & Train Resource Manager (The Brain)
     # set the start time for the NEW simulation
-    sim_start = datetime(2017, 1, 1, 8, 0, 0)
-    sim_end = datetime(2017, 2, 1, 8, 0, 0) # Used for arrival generation in spawner class
+    sim_start = datetime(2016, 1, 1, 8, 0, 0)
+    sim_end = datetime(2016, 4, 1, 8, 0, 0) # Used for arrival generation in spawner class
 
     chosen_strategy = AdvancedOptimizationPlanner()
     resource_manager = AdvancedResourceManager(simulation_start_time=sim_start, strategy=chosen_strategy)
@@ -46,19 +46,20 @@ def main():
     resource_manager.mine_organizational_model(df)
 
 
+
     # 4. Initialize Simulation Engine (The Machine)
     engine = SimulationEngine(
         net=net,
         initial_marking=initial_marking,
         final_marking=final_marking,
         branching_mode="basic", # "none" | "basic" | "advanced"
-        event_log_path="simulation_log.csv", # This is where we WRITE new data
+        event_log_path="simulation_log_advancedSpawner_1.csv", # This is where we WRITE new data
         simulation_start_datetime=sim_start,
         simulation_end_datetime=sim_end,
         use_advanced_model=True,
         resource_manager=resource_manager,
         original_log_path=training_data_path,
-        spawner_advanced=False # True if advanced spawner is used, else static spawner
+        spawner_advanced=True # True if advanced spawner is used, else static spawner
     )
 
     # 5. Register the Spawner Process
@@ -80,12 +81,12 @@ def arrival_generator(engine, sim_start):
     """
     print("Spawning process started...")
 
-    # Sort arrivals just in case they aren't sorted
+    # Sort arrivals
     sorted_arrivals = sorted(engine.list_of_arrivals)
 
     for next_arrival in sorted_arrivals:
         # Calculate when this arrival happens relative to simulation start
-        arrival_offset = (next_arrival - sim_start).total_seconds()
+        arrival_offset = (next_arrival.replace(tzinfo=None) - sim_start.replace(tzinfo=None)).total_seconds()
 
         # Determine how long to wait from the CURRENT simulation time (env.now)
         # env.now is usually 0 at the start

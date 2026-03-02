@@ -53,7 +53,7 @@ def main():
         initial_marking=initial_marking,
         final_marking=final_marking,
         branching_mode="basic", # "none" | "basic" | "advanced"
-        event_log_path="simulation_log_advancedSpawner_1.csv", # This is where we WRITE new data
+        event_log_path="simulation_log_advancedSpawner_2.csv", # This is where we WRITE new data
         simulation_start_datetime=sim_start,
         simulation_end_datetime=sim_end,
         use_advanced_model=True,

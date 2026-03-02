@@ -153,7 +153,7 @@ class DynamicSpawner_KDE():
         # output_df.to_csv('output_df.csv')
         # self.logger.info('Complete.')
 
-        self.logger.info(f'number of observations per cluster: {output_df.groupby("predicted_cluster").count()}')
+        # self.logger.info(f'number of observations per cluster: {output_df.groupby("predicted_cluster").count()}')
         train_df_clustered = (
             pd.Series(clustered_train_dict)  # index = cluster, values = list of dates
             .explode()  # one row per (cluster, date)

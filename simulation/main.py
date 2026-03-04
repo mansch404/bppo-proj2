@@ -11,7 +11,9 @@ from datetime import datetime, timedelta
 
 from simulation.resource_manager.resource_manager import (
     AdvancedResourceManager,
-    AdvancedOptimizationPlanner
+    AdvancedOptimizationPlanner,
+    BatchPlanner,
+    AssignmentProblemPlanner,
 )
 
 
@@ -19,7 +21,7 @@ def main():
     """Run simulation with Petri Net process model"""
 
     # 1. Setup Paths
-   # resource_manager = AdvancedResourceManager()
+    # resource_manager = AdvancedResourceManager()
     script_dir = Path(__file__).parent
 
     bpmn_path = str(script_dir / "process_model.bpmn")
@@ -34,10 +36,21 @@ def main():
     # 3. Initialize & Train Resource Manager (The Brain)
     # set the start time for the NEW simulation
     sim_start = datetime(2017, 1, 1, 8, 0, 0)
-    sim_end = datetime(2017, 2, 1, 8, 0, 0) # Used for arrival generation in spawner class
+    sim_end = datetime(
+        2017, 2, 1, 8, 0, 0
+    )  # Used for arrival generation in spawner class
 
-    chosen_strategy = AdvancedOptimizationPlanner()
-    resource_manager = AdvancedResourceManager(simulation_start_time=sim_start, strategy=chosen_strategy)
+    chosen_strategy = AssignmentProblemPlanner(delta=1.2)
+    resource_manager = AdvancedResourceManager(
+        simulation_start_time=sim_start, strategy=chosen_strategy
+    )
+
+    # Set retry interval for AP/Batch planners
+    if isinstance(chosen_strategy, AssignmentProblemPlanner):
+        resource_manager.retry_interval = 60  # Recompute every 60 seconds
+    elif isinstance(chosen_strategy, BatchPlanner):
+        resource_manager.retry_interval = 120  # Check batch every 2 minutes
+    # Otherwise: default 900 seconds (15 min) for Random/Greedy etc.
 
     log = pm4py.read_xes(training_data_path)
     df = pm4py.convert_to_dataframe(log)
@@ -45,20 +58,19 @@ def main():
     print("Trainiere Organizational Model (K-Means & Heatmaps)...")
     resource_manager.mine_organizational_model(df)
 
-
     # 4. Initialize Simulation Engine (The Machine)
     engine = SimulationEngine(
         net=net,
         initial_marking=initial_marking,
         final_marking=final_marking,
-        branching_mode="basic", # "none" | "basic" | "advanced"
-        event_log_path="simulation_log.csv", # This is where we WRITE new data
+        branching_mode="basic",  # "none" | "basic" | "advanced"
+        event_log_path="simulation_log.csv",  # This is where we WRITE new data
         simulation_start_datetime=sim_start,
         simulation_end_datetime=sim_end,
         use_advanced_model=True,
         resource_manager=resource_manager,
         original_log_path=training_data_path,
-        spawner_advanced=False # True if advanced spawner is used, else static spawner
+        spawner_advanced=False,  # True if advanced spawner is used, else static spawner
     )
 
     # 5. Register the Spawner Process
@@ -71,6 +83,7 @@ def main():
 
     print("Running simulation...")
     engine.run(until=duration_seconds)
+
 
 # CHANGE
 def arrival_generator(engine, sim_start):

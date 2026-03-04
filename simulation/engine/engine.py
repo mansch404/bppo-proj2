@@ -339,7 +339,8 @@ class SimulationEngine:
                 if resource is None:
                     # No one available (night time, or all busy)
                     # Wait 15 minutes (900 seconds) and check again
-                    yield self.env.timeout(900)
+                    retry_interval = getattr(self.resource_manager, 'retry_interval', 900)
+                    yield self.env.timeout(retry_interval)
         else:
             # Fallback if no manager (old behavior)
             resource = random.choice(self.fallback_resources)

@@ -304,14 +304,21 @@ class AssignmentProblemPlanner(ResourcePlanner):
                 busy_time = manager.busy_until.get(
                     resource, manager.simulation_start_time
                 )
+                is_working = busy_time > real_time
 
-                if busy_time <= real_time:
-                    # Resource is FREE → cost = processing time
-                    cost = duration
-                else:
-                    # Resource is BUSY → cost = processing time + remaining time
+                if is_working:
+                    # R_working: resource is present (actively working)
                     remaining = (busy_time - real_time).total_seconds()
                     cost = duration + remaining
+                elif resource in getattr(manager, 'system_resources', set()):
+                    # System resource (bot): always available
+                    cost = duration
+                else:
+                    # Not working, not a bot → check heatmap + capacity
+                    if manager.is_resource_available(resource, real_time, duration):
+                        cost = duration    # R_available
+                    else:
+                        cost = BIG         # R_unavailable → exclude
 
                 cost_matrix[i, j] = cost
                 auth_costs.append(duration)  # c(t,r) for average computation

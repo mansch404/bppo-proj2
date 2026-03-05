@@ -40,7 +40,7 @@ def main():
         2016, 4, 1, 8, 0, 0
     )  # Used for arrival generation in spawner class
 
-    chosen_strategy = AssignmentProblemPlanner(delta=1.2)
+    chosen_strategy = AdvancedOptimizationPlanner()
     resource_manager = AdvancedResourceManager(
         simulation_start_time=sim_start, strategy=chosen_strategy
     )

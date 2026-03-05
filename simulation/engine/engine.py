@@ -7,6 +7,7 @@ import simpy
 import random
 import pickle
 from typing import Set, Dict, Optional
+import math
 from pm4py.objects.petri_net.obj import PetriNet, Marking
 from datetime import datetime, timedelta
 from scipy import stats
@@ -55,6 +56,7 @@ class SimulationEngine:
         self.final_marking = final_marking
         self.event_logger = EventLogger(event_log_path)
         self.case_counter = 0
+        self.metric_records = []
 
         self.resource_manager = resource_manager
 
@@ -323,6 +325,7 @@ class SimulationEngine:
 
         # 3. Request Resource (Wait if busy/unavailable)
         resource = None
+        arrival_seconds = float(self.env.now)
 
         if self.resource_manager:
             # Loop until we get a resource (Queueing behavior)
@@ -344,6 +347,42 @@ class SimulationEngine:
         else:
             # Fallback if no manager (old behavior)
             resource = random.choice(self.fallback_resources)
+
+        start_seconds = float(self.env.now)
+        wait_seconds = max(0.0, float(start_seconds - arrival_seconds))
+
+        # Busy-until is the source of truth for allocation duration in the resource manager.
+        end_seconds = None
+        if self.resource_manager:
+            busy_until = self.resource_manager.busy_until.get(resource)
+            if busy_until is not None:
+                end_seconds = float(
+                    (busy_until - self.simulation_start_datetime).total_seconds()
+                )
+
+        if end_seconds is None or not math.isfinite(end_seconds):
+            end_seconds = float(start_seconds + processing_time)
+
+        service_seconds = max(0.0, float(end_seconds - start_seconds))
+        is_system = (
+            self.resource_manager is not None
+            and resource in getattr(self.resource_manager, "system_resources", set())
+        ) or (resource == "System")
+
+        self.metric_records.append(
+            {
+                "case": case_id,
+                "activity": activity_name,
+                "resource": resource,
+                "is_system": bool(is_system),
+                "arrival_seconds": arrival_seconds,
+                "start_seconds": start_seconds,
+                "end_seconds": float(end_seconds),
+                "wait_seconds": wait_seconds,
+                "service_seconds": service_seconds,
+                "timed_out": False,
+            }
+        )
 
         # 4. Log Start
         self.event_logger.log_event(

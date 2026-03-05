@@ -3,11 +3,11 @@ Main Execution Script
 Run the business process simulation using Petri Net
 """
 
+import pandas as pd
 import pm4py
 from simulation.engine.engine import SimulationEngine
-from resource_manager import AdvancedResourceManager
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from simulation.resource_manager.resource_manager import (
     AdvancedResourceManager,
@@ -15,6 +15,36 @@ from simulation.resource_manager.resource_manager import (
     BatchPlanner,
     AssignmentProblemPlanner,
 )
+from simulation.resource_manager.metrics import compute_optimization_metrics
+
+
+def report_optimization_metrics(
+    engine: SimulationEngine,
+    resource_manager: AdvancedResourceManager,
+    sla_threshold_seconds: int = 3600,
+    output_path: str = "simulation_metrics.csv",
+):
+    """Compute and print optimization metrics from in-memory engine records."""
+    records = list(getattr(engine, "metric_records", []))
+    if not records:
+        print("[METRICS] Warning: No metric records captured during simulation.")
+
+    df = pd.DataFrame(records)
+    capacities = dict(getattr(resource_manager, "daily_effort_capacities", {}))
+    metrics = compute_optimization_metrics(
+        df,
+        capacities=capacities,
+        sla_threshold_seconds=sla_threshold_seconds,
+    )
+
+    print("\n--- OPTIMIZATION METRICS ---")
+    for key, value in metrics.items():
+        print(f"{key}: {value}")
+
+    metrics_df = pd.DataFrame([metrics])
+    metrics_df.to_csv(output_path, index=False)
+    print(f"[METRICS] Saved to {output_path}")
+    return metrics
 
 
 def main():
@@ -83,6 +113,7 @@ def main():
 
     print("Running simulation...")
     engine.run(until=duration_seconds)
+    return report_optimization_metrics(engine, resource_manager, sla_threshold_seconds=3600)
 
 
 # CHANGE

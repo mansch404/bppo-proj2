@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Mapping, Set
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -367,3 +367,283 @@ def compute_custom_optimization_metrics(
             daily_work_seconds=daily_work_seconds,
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Metrics Registry API
+# ---------------------------------------------------------------------------
+
+
+class MetricDescriptor:
+    """Registration entry for one logical metric (may produce multiple KPIs)."""
+
+    __slots__ = ("func", "names", "group", "directions", "context_keys", "extractor", "requires_df")
+
+    def __init__(
+        self,
+        func: Callable,
+        names: Tuple[str, ...],
+        group: str,
+        directions: Dict[str, str],
+        context_keys: Tuple[str, ...],
+        extractor: Callable,
+        requires_df: bool = True,
+    ) -> None:
+        self.func = func
+        self.names = names
+        self.group = group
+        self.directions = directions
+        self.context_keys = context_keys
+        self.extractor = extractor
+        self.requires_df = requires_df
+
+
+class MetricsRegistry:
+    """
+    Central registry for all optimization metrics.
+
+    Usage::
+
+        registry = get_default_registry()
+
+        # Single metric by name:
+        value = registry.compute("Avg Case Cycle Time (min)", df, capacities=caps)
+
+        # All 11 metrics:
+        all_results = registry.compute_all(df, capacities=caps, ...)
+
+        # Only basic (6) or advanced (5):
+        basic = registry.compute_group("basic", df, capacities=caps)
+        advanced = registry.compute_group("advanced", df, ...)
+
+        # Available names:
+        registry.list_metrics()
+        registry.list_metrics(group="basic")
+    """
+
+    def __init__(self) -> None:
+        self._descriptors: List[MetricDescriptor] = []
+        self._name_to_descriptor: Dict[str, MetricDescriptor] = {}
+
+    def register(self, descriptor: MetricDescriptor) -> None:
+        self._descriptors.append(descriptor)
+        for name in descriptor.names:
+            if name in self._name_to_descriptor:
+                raise ValueError(f"Duplicate metric name: {name}")
+            self._name_to_descriptor[name] = descriptor
+
+    def list_metrics(self, *, group: Optional[str] = None) -> List[str]:
+        """Return registered metric names, optionally filtered by group."""
+        names: List[str] = []
+        for desc in self._descriptors:
+            if group is not None and desc.group != group:
+                continue
+            names.extend(desc.names)
+        return names
+
+    def get_directions(self) -> Dict[str, str]:
+        """Return ``{metric_name: direction}`` for every registered metric."""
+        directions: Dict[str, str] = {}
+        for desc in self._descriptors:
+            directions.update(desc.directions)
+        return directions
+
+    def compute(self, metric_name: str, df: Optional[pd.DataFrame] = None, **context: object) -> float:
+        """Compute a single metric by name and return the float value."""
+        desc = self._name_to_descriptor.get(metric_name)
+        if desc is None:
+            raise KeyError(
+                f"Unknown metric: {metric_name!r}. Available: {self.list_metrics()}"
+            )
+        return self._invoke(desc, df, context)[metric_name]
+
+    def compute_group(
+        self, group: str, df: Optional[pd.DataFrame] = None, **context: object
+    ) -> Dict[str, float]:
+        """Compute all metrics belonging to *group* (``'basic'`` or ``'advanced'``)."""
+        results: Dict[str, float] = {}
+        seen: set = set()
+        for desc in self._descriptors:
+            if desc.group != group or id(desc) in seen:
+                continue
+            seen.add(id(desc))
+            results.update(self._invoke(desc, df, context))
+        return results
+
+    def compute_all(
+        self, df: Optional[pd.DataFrame] = None, **context: object
+    ) -> Dict[str, float]:
+        """Compute every registered metric and return a flat dict."""
+        results: Dict[str, float] = {}
+        seen: set = set()
+        for desc in self._descriptors:
+            if id(desc) in seen:
+                continue
+            seen.add(id(desc))
+            results.update(self._invoke(desc, df, context))
+        return results
+
+    def _invoke(
+        self, desc: MetricDescriptor, df: Optional[pd.DataFrame], context: dict
+    ) -> Dict[str, float]:
+        kwargs: dict = {}
+        for key in desc.context_keys:
+            if key in context:
+                kwargs[key] = context[key]
+        if desc.requires_df:
+            raw = desc.func(df, **kwargs)
+        else:
+            raw = desc.func(**kwargs)
+        return desc.extractor(raw)
+
+
+def _resource_occupation_humans(df: pd.DataFrame) -> float:
+    """Wrapper: resource occupation for human resources only."""
+    return compute_resource_occupation(df, include_system=False)
+
+
+def _build_default_registry() -> MetricsRegistry:
+    """Construct the default registry with all basic + advanced metrics."""
+    registry = MetricsRegistry()
+
+    # --- BASIC GROUP (6 KPIs from 4 functions) ---
+
+    registry.register(MetricDescriptor(
+        func=compute_case_cycle_metrics,
+        names=("Avg Case Cycle Time (min)", "P90 Case Cycle Time (min)"),
+        group="basic",
+        directions={
+            "Avg Case Cycle Time (min)": "lower",
+            "P90 Case Cycle Time (min)": "lower",
+        },
+        context_keys=(),
+        extractor=lambda r: {
+            "Avg Case Cycle Time (min)": r["mean"],
+            "P90 Case Cycle Time (min)": r["p90"],
+        },
+    ))
+
+    registry.register(MetricDescriptor(
+        func=_resource_occupation_humans,
+        names=("Avg Resource Occupation Humans (%)",),
+        group="basic",
+        directions={"Avg Resource Occupation Humans (%)": "higher"},
+        context_keys=(),
+        extractor=lambda r: {"Avg Resource Occupation Humans (%)": r},
+    ))
+
+    registry.register(MetricDescriptor(
+        func=compute_weighted_jain_fairness,
+        names=("Weighted Fairness (Jain, humans)",),
+        group="basic",
+        directions={"Weighted Fairness (Jain, humans)": "higher"},
+        context_keys=("capacities",),
+        extractor=lambda r: {"Weighted Fairness (Jain, humans)": r},
+    ))
+
+    registry.register(MetricDescriptor(
+        func=compute_wait_metrics,
+        names=("Avg Wait Time (min)", "Service Level <=60min (%)"),
+        group="basic",
+        directions={
+            "Avg Wait Time (min)": "lower",
+            "Service Level <=60min (%)": "higher",
+        },
+        context_keys=("sla_threshold_seconds",),
+        extractor=lambda r: {
+            "Avg Wait Time (min)": r["avg_wait_min"],
+            "Service Level <=60min (%)": r["service_level_pct"],
+        },
+    ))
+
+    # --- ADVANCED GROUP (5 KPIs from 5 functions) ---
+
+    registry.register(MetricDescriptor(
+        func=compute_value_weighted_wait,
+        names=("Value-Weighted Wait (min)",),
+        group="advanced",
+        directions={"Value-Weighted Wait (min)": "lower"},
+        context_keys=(),
+        extractor=lambda r: {"Value-Weighted Wait (min)": r},
+    ))
+
+    registry.register(MetricDescriptor(
+        func=compute_value_at_risk_sla_breach,
+        names=("Value-at-Risk SLA Breach (%)",),
+        group="advanced",
+        directions={"Value-at-Risk SLA Breach (%)": "lower"},
+        context_keys=("sla_threshold_seconds",),
+        extractor=lambda r: {"Value-at-Risk SLA Breach (%)": r},
+    ))
+
+    registry.register(MetricDescriptor(
+        func=compute_case_handover_rate,
+        names=("Case Handover Rate",),
+        group="advanced",
+        directions={"Case Handover Rate": "lower"},
+        context_keys=(),
+        extractor=lambda r: {"Case Handover Rate": r},
+    ))
+
+    registry.register(MetricDescriptor(
+        func=compute_automation_leverage,
+        names=("Automation Leverage on Eligible Tasks (%)",),
+        group="advanced",
+        directions={"Automation Leverage on Eligible Tasks (%)": "higher"},
+        context_keys=("automation_eligible_activities",),
+        extractor=lambda r: {"Automation Leverage on Eligible Tasks (%)": r},
+    ))
+
+    registry.register(MetricDescriptor(
+        func=compute_human_capacity_stress_ratio,
+        names=("Human Capacity Stress Ratio (%)",),
+        group="advanced",
+        directions={"Human Capacity Stress Ratio (%)": "lower"},
+        context_keys=("capacities", "daily_work_seconds"),
+        extractor=lambda r: {"Human Capacity Stress Ratio (%)": r},
+        requires_df=False,
+    ))
+
+    return registry
+
+
+_DEFAULT_REGISTRY: Optional[MetricsRegistry] = None
+
+
+def get_default_registry() -> MetricsRegistry:
+    """Return the singleton default registry with all 11 metrics."""
+    global _DEFAULT_REGISTRY
+    if _DEFAULT_REGISTRY is None:
+        _DEFAULT_REGISTRY = _build_default_registry()
+    return _DEFAULT_REGISTRY
+
+
+# ---------------------------------------------------------------------------
+# Convenience functions (delegate to the default registry)
+# ---------------------------------------------------------------------------
+
+
+def compute_metric(name: str, df: Optional[pd.DataFrame] = None, **context: object) -> float:
+    """Compute a single metric by name."""
+    return get_default_registry().compute(name, df, **context)
+
+
+def compute_all_metrics(
+    df: Optional[pd.DataFrame] = None, **context: object
+) -> Dict[str, float]:
+    """Compute all 11 metrics (basic + advanced)."""
+    return get_default_registry().compute_all(df, **context)
+
+
+def compute_basic_metrics(
+    df: Optional[pd.DataFrame] = None, **context: object
+) -> Dict[str, float]:
+    """Compute the 6 basic metrics."""
+    return get_default_registry().compute_group("basic", df, **context)
+
+
+def compute_advanced_metrics(
+    df: Optional[pd.DataFrame] = None, **context: object
+) -> Dict[str, float]:
+    """Compute the 5 advanced metrics."""
+    return get_default_registry().compute_group("advanced", df, **context)

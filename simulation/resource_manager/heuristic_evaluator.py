@@ -29,10 +29,7 @@ import pandas as pd
 import pm4py
 
 try:
-    from .metrics import (
-        compute_custom_optimization_metrics,
-        compute_optimization_metrics,
-    )
+    from .metrics import get_default_registry
     from .resource_manager import (
         AdvancedOptimizationPlanner,
         AdvancedResourceManager,
@@ -43,10 +40,7 @@ try:
         RoundRobinPlanner,
     )
 except ImportError:
-    from metrics import (
-        compute_custom_optimization_metrics,
-        compute_optimization_metrics,
-    )
+    from metrics import get_default_registry
     from resource_manager import (
         AdvancedOptimizationPlanner,
         AdvancedResourceManager,
@@ -64,20 +58,14 @@ DEFAULT_BATCH_WAIT_CAP_SECONDS = 3600.0
 DEFAULT_ASSIGNMENT_WAIT_CAP_SECONDS = 3600.0
 DEFAULT_NON_BATCH_WAIT_CAP_SECONDS = 86400.0 * 7
 
-CUSTOM_METRICS = [
-    "Value-Weighted Wait (min)",
-    "Value-at-Risk SLA Breach (%)",
-    "Case Handover Rate",
-    "Automation Leverage on Eligible Tasks (%)",
-    "Human Capacity Stress Ratio (%)",
-]
+_REGISTRY = get_default_registry()
+
+CUSTOM_METRICS = _REGISTRY.list_metrics(group="advanced")
 
 CUSTOM_METRIC_DIRECTIONS = {
-    "Value-Weighted Wait (min)": "lower",
-    "Value-at-Risk SLA Breach (%)": "lower",
-    "Case Handover Rate": "lower",
-    "Automation Leverage on Eligible Tasks (%)": "higher",
-    "Human Capacity Stress Ratio (%)": "lower",
+    name: direction
+    for name, direction in _REGISTRY.get_directions().items()
+    if name in CUSTOM_METRICS
 }
 
 
@@ -383,7 +371,7 @@ class FullScaleEvaluator:
         seed: Optional[int],
         sla_threshold_seconds: int,
     ) -> Dict[str, float]:
-        """Compute baseline + custom metrics for one run."""
+        """Compute baseline + custom metrics for one run via the registry."""
         df_res = pd.DataFrame(log)
         capacities = dict(getattr(manager, "daily_effort_capacities", {}))
         daily_work_seconds = {
@@ -407,24 +395,18 @@ class FullScaleEvaluator:
             else np.nan
         )
 
-        metrics = {"Strategy": name, "Seed": seed, "Timeout Rate (%)": timeout_rate}
-        metrics.update(
-            compute_optimization_metrics(
-                df_res,
-                capacities=capacities,
-                sla_threshold_seconds=sla_threshold_seconds,
-            )
+        registry = get_default_registry()
+        all_metrics = registry.compute_all(
+            df_res,
+            capacities=capacities,
+            sla_threshold_seconds=sla_threshold_seconds,
+            daily_work_seconds=daily_work_seconds,
+            automation_eligible_activities=automation_eligible_activities,
         )
-        metrics.update(
-            compute_custom_optimization_metrics(
-                df_res,
-                capacities=capacities,
-                daily_work_seconds=daily_work_seconds,
-                automation_eligible_activities=automation_eligible_activities,
-                sla_threshold_seconds=sla_threshold_seconds,
-            )
-        )
-        return metrics
+
+        result = {"Strategy": name, "Seed": seed, "Timeout Rate (%)": timeout_rate}
+        result.update(all_metrics)
+        return result
 
     def run_seeded_study(
         self,

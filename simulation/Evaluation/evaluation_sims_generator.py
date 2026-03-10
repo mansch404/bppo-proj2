@@ -3,7 +3,7 @@ import random
 import copy
 import numpy as np
 import pandas as pd
-from simulation.resource_manager import metrics
+from simulation.resource_manager.metrics import compute_all_metrics
 from pathlib import Path
 from datetime import datetime
 from simulation.spawner.dynamic_spawner import DynamicSpawner_KDE
@@ -43,7 +43,10 @@ STRATEGIES = {
 # Store mined organizational data for the metrics function
 ORG_CONTEXT = {
     "capacities": {},
-    "system_resources": set()
+    "system_resources": set(),
+    "daily_work_seconds": {},
+    "automation_eligible_activities": set(),
+    "sla_threshold_seconds": 3600,
 }
 
 eval_log_dir_name = "eval_logs_1"
@@ -103,11 +106,17 @@ def run_sims_for_evaluations():
             if not ORG_CONTEXT["capacities"]:
                 ORG_CONTEXT["capacities"] = resource_manager.daily_effort_capacities
                 ORG_CONTEXT["system_resources"] = resource_manager.system_resources
+                ORG_CONTEXT["automation_eligible_activities"] = {
+                    act for act, role_ids in resource_manager.activity_permissions.items()
+                    if -1 in role_ids
+                }
 
             # 2 Setup distinct output log name
             output_log_name = f"{eval_log_dir_name}/{method_name}_run_{run_index}.csv"
 
             # Initialize Engine
+            # Evaluation behavior is handled in this script via clean-and-aggregate steps,
+            # not through a dedicated SimulationEngine evaluation flag.
             engine = SimulationEngine(
                 net=net,
                 initial_marking=initial_marking,
@@ -119,8 +128,7 @@ def run_sims_for_evaluations():
                 use_advanced_model=True,
                 resource_manager=resource_manager,
                 original_log_path=training_data_path,
-                spawner_advanced=True,
-                evaluation_flag=True
+                spawner_advanced=True
             )
 
             # 3. OVERWRITE the internally generated arrivals with global list
@@ -135,6 +143,12 @@ def run_sims_for_evaluations():
 
             print(f"  -> Running {method_name} with {len(engine.list_of_arrivals)} shared arrivals...")
             engine.run(until=duration_seconds)
+
+            # Capture per-run daily_work_seconds for stress ratio metric
+            ORG_CONTEXT["daily_work_seconds"] = {
+                res: dict(usage)
+                for res, usage in resource_manager.daily_work_seconds.items()
+            }
 
             # Pass the in-memory metric_records directly to the cleaner
             clean_and_save_records(engine.metric_records, method_name, run_index)
@@ -177,7 +191,7 @@ def clean_and_save_records(records_list, method_name, run_index):
 
 def compute_and_aggregate_results():
     print("\n" + "=" * 50)
-    print("CALCULATING FINAL OPTIMIZATION METRICS")
+    print("CALCULATING FINAL OPTIMIZATION METRICS (ALL 11)")
     print("=" * 50)
 
     final_report_data = []
@@ -197,10 +211,12 @@ def compute_and_aggregate_results():
                 print(f"  Skipping {clean_log_path.name} (File is empty)")
                 continue
 
-            run_result = metrics.compute_optimization_metrics(
-                df=df,
+            run_result = compute_all_metrics(
+                df,
                 capacities=ORG_CONTEXT["capacities"],
-                sla_threshold_seconds=3600
+                sla_threshold_seconds=ORG_CONTEXT["sla_threshold_seconds"],
+                daily_work_seconds=ORG_CONTEXT.get("daily_work_seconds", {}),
+                automation_eligible_activities=ORG_CONTEXT.get("automation_eligible_activities", set()),
             )
             run_metrics.append(run_result)
 
@@ -224,7 +240,6 @@ if __name__ == "__main__":
     Path(f"{eval_log_dir_name}").mkdir(exist_ok=True)
     run_sims_for_evaluations()
     compute_and_aggregate_results()
-
 
 
 

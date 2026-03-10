@@ -165,14 +165,20 @@ class TestSelectResource:
 
         assert result is None
 
-    def test_batch_planner_waits_until_k(self):
-        """BatchPlanner should return None until k tasks are pending."""
-        planner = BatchPlanner(k=3)
+    def test_batch_planner_collects_then_assigns(self):
+        """BatchPlanner collects k tasks, then assigns. Retries also trigger solve."""
+        planner = BatchPlanner(k=2)
         manager = MockManager()
 
-        # First two tasks: batch not full → None
+        # First task: batch not full → None (collecting)
         r1 = planner.select_resource(manager, "TaskA", 0, 100.0, case_id="case_1")
-        r2 = planner.select_resource(manager, "TaskA", 0, 100.0, case_id="case_2")
         assert r1 is None
-        assert r2 is None
-        assert len(planner.pending_tasks) == 2
+        assert len(planner.pending_tasks) == 1
+
+        # Second task: batch full (k=2) → solve, this task gets assigned
+        r2 = planner.select_resource(manager, "TaskA", 0, 100.0, case_id="case_2")
+        assert r2 in ("Alice", "Bob")
+
+        # First task was also assigned in batch → pick up from cache
+        r1_cached = planner.select_resource(manager, "TaskA", 0, 100.0, case_id="case_1")
+        assert r1_cached in ("Alice", "Bob")

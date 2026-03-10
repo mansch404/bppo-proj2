@@ -375,6 +375,9 @@ class SimulationEngine:
                 "activity": activity_name,
                 "resource": resource,
                 "is_system": bool(is_system),
+                "requested_amount": float(
+                    case_context["case_attributes"].get("RequestedAmount", 1.0)
+                ),
                 "arrival_seconds": arrival_seconds,
                 "start_seconds": start_seconds,
                 "end_seconds": float(end_seconds),

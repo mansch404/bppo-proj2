@@ -22,6 +22,10 @@ class ResourcePlanner(ABC):
     ) -> Optional[str]:
         pass
 
+    def on_task_timeout(self, *, case_id: str, activity: str, **kwargs) -> None:
+        """Optional hook: planner can evict internal state for timed-out tasks."""
+        return None
+
 
 # --- 1.1 & 1.7 BASIC HEURISTICS ---
 
@@ -128,25 +132,52 @@ class BatchPlanner(ResourcePlanner):
         self.k = k
         self.pending_tasks = {}  # task_id → {activity, sim_time, duration, kwargs}
         self.batch_assignments = {}  # task_id → resource_name (results of last batch solve)
+        self._task_insertion_order = {}  # task_id -> insertion index (stable tie-breaking)
+        self._next_insertion_idx = 0
+        self._pending_version = 0
+        self._sorted_cache_version = -1
+        self._sorted_task_ids = []
+
+    @staticmethod
+    def _build_task_id(case_id: str, activity: str) -> str:
+        return f"{case_id}_{activity}"
+
+    def _remove_task(self, task_id: str) -> None:
+        pending_removed = task_id in self.pending_tasks
+        self.pending_tasks.pop(task_id, None)
+        self.batch_assignments.pop(task_id, None)
+        self._task_insertion_order.pop(task_id, None)
+        if pending_removed:
+            self._pending_version += 1
 
     def select_resource(self, manager, activity, current_sim_time, duration, **kwargs):
         case_id = kwargs.get("case_id", f"unknown_{id(kwargs)}")
-        task_id = f"{case_id}_{activity}"
+        task_id = self._build_task_id(case_id, activity)
 
         # Check: Was this task already assigned in a previous batch round?
         if task_id in self.batch_assignments:
-            resource = self.batch_assignments.pop(task_id)
-            if task_id in self.pending_tasks:
-                del self.pending_tasks[task_id]
+            resource = self.batch_assignments.get(task_id)
+            self._remove_task(task_id)
             return resource
 
         # Register task
+        existing = self.pending_tasks.get(task_id)
         self.pending_tasks[task_id] = {
             "activity": activity,
             "sim_time": current_sim_time,
             "duration": duration,
             "kwargs": kwargs,
         }
+        if existing is None:
+            self._task_insertion_order[task_id] = self._next_insertion_idx
+            self._next_insertion_idx += 1
+            self._pending_version += 1
+        else:
+            if (
+                existing.get("duration") != duration
+                or existing.get("activity") != activity
+            ):
+                self._pending_version += 1
 
         # Batch full?
         if len(self.pending_tasks) >= self.k:
@@ -154,8 +185,8 @@ class BatchPlanner(ResourcePlanner):
 
             # Check if THIS task was assigned
             if task_id in self.batch_assignments:
-                resource = self.batch_assignments.pop(task_id)
-                del self.pending_tasks[task_id]
+                resource = self.batch_assignments.get(task_id)
+                self._remove_task(task_id)
                 return resource
 
         # Batch not full OR task not assigned → wait
@@ -167,11 +198,21 @@ class BatchPlanner(ResourcePlanner):
 
         real_time = manager.simulation_start_time + timedelta(seconds=current_sim_time)
         assigned_resources = set()
+        if self._sorted_cache_version != self._pending_version:
+            self._sorted_task_ids = sorted(
+                self.pending_tasks.keys(),
+                key=lambda task_id: (
+                    self.pending_tasks[task_id]["duration"],
+                    self._task_insertion_order.get(task_id, 0),
+                    task_id,
+                ),
+            )
+            self._sorted_cache_version = self._pending_version
 
-        for task_id, task_info in sorted(
-            self.pending_tasks.items(),
-            key=lambda x: x[1]["duration"],  # Shortest tasks first
-        ):
+        for task_id in self._sorted_task_ids:
+            task_info = self.pending_tasks.get(task_id)
+            if task_info is None:
+                continue
             activity = task_info["activity"]
             duration = task_info["duration"]
 
@@ -190,6 +231,10 @@ class BatchPlanner(ResourcePlanner):
                 self.batch_assignments[task_id] = best
                 assigned_resources.add(best)
 
+    def on_task_timeout(self, *, case_id: str, activity: str, **kwargs) -> None:
+        task_id = self._build_task_id(case_id, activity)
+        self._remove_task(task_id)
+
 
 # --- ASSIGNMENT PROBLEM PLANNER (Task 2.1 Advanced) ---
 
@@ -203,11 +248,19 @@ class AssignmentProblemPlanner(ResourcePlanner):
     def __init__(self, delta=1.2):
         self.delta = delta
         self.pending_tasks = {}  # task_id → {activity, sim_time, duration, kwargs}
+        self._activity_authorized_resources_cache: Dict[str, Set[str]] = {}
+
+    @staticmethod
+    def _build_task_id(case_id: str, activity: str) -> str:
+        return f"{case_id}_{activity}"
+
+    def _remove_task(self, task_id: str) -> None:
+        self.pending_tasks.pop(task_id, None)
 
     def select_resource(self, manager, activity, current_sim_time, duration, **kwargs):
         # 1. Create unique task ID
         case_id = kwargs.get("case_id", f"unknown_{id(kwargs)}")
-        task_id = f"{case_id}_{activity}"
+        task_id = self._build_task_id(case_id, activity)
 
         # 2. Register task (or update on retry)
         self.pending_tasks[task_id] = {
@@ -225,22 +278,19 @@ class AssignmentProblemPlanner(ResourcePlanner):
 
         # 4. Build cost matrix
         task_ids = list(self.pending_tasks.keys())
+        task_index_map = {tid: idx for idx, tid in enumerate(task_ids)}
         cost_matrix = self._build_cost_matrix(
             manager, task_ids, all_resources, current_sim_time
         )
 
         # 5. Solve assignment problem
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        row_to_col = dict(zip(row_ind.tolist(), col_ind.tolist()))
 
         # 6. Find assignment for THIS task
         n_resources = len(all_resources)
-        this_task_idx = task_ids.index(task_id)
-
-        assigned_col = None
-        for r, c in zip(row_ind, col_ind):
-            if r == this_task_idx:
-                assigned_col = c
-                break
+        this_task_idx = task_index_map[task_id]
+        assigned_col = row_to_col.get(this_task_idx)
 
         # 7. Interpret result
         if (
@@ -248,21 +298,36 @@ class AssignmentProblemPlanner(ResourcePlanner):
         ):  # Wenn assigned_col >= n_resources (z.B. assigned_col=4, n_resources=3) → Dummy!
             # Real resource assigned
             assigned_resource = all_resources[assigned_col]
-            del self.pending_tasks[task_id]
+            self._remove_task(task_id)
             return assigned_resource
         else:
             # Dummy assigned → wait
             return None
+
+    def on_task_timeout(self, *, case_id: str, activity: str, **kwargs) -> None:
+        task_id = self._build_task_id(case_id, activity)
+        self._remove_task(task_id)
+
+    def _get_authorized_resources_for_activity(self, manager, activity: str) -> Set[str]:
+        cached = self._activity_authorized_resources_cache.get(activity)
+        if cached is not None:
+            return cached
+
+        allowed_roles = manager.activity_permissions.get(activity, set())
+        authorized = {
+            res for rid in allowed_roles for res in manager.roles.get(rid, [])
+        }
+        self._activity_authorized_resources_cache[activity] = authorized
+        return authorized
 
     def _get_all_relevant_resources(self, manager):
         """Collect all resources authorized for at least one pending task."""
         all_resources = set()
         for task_info in self.pending_tasks.values():
             activity = task_info["activity"]
-            allowed_roles = manager.activity_permissions.get(activity, set())
-            for rid in allowed_roles:
-                for res in manager.roles.get(rid, []):
-                    all_resources.add(res)
+            all_resources.update(
+                self._get_authorized_resources_for_activity(manager, activity)
+            )
         return sorted(all_resources)  # Sorted for deterministic order
 
     def _build_cost_matrix(self, manager, task_ids, resources, current_sim_time):
@@ -277,8 +342,7 @@ class AssignmentProblemPlanner(ResourcePlanner):
         n_cols = n_resources + n_tasks  # Real + dummies
 
         BIG = 1e9
-        matrix_size = max(n_tasks, n_cols)
-        cost_matrix = np.full((matrix_size, matrix_size), BIG)
+        cost_matrix = np.full((n_tasks, n_cols), BIG)
 
         real_time = manager.simulation_start_time + timedelta(seconds=current_sim_time)
 
@@ -288,11 +352,7 @@ class AssignmentProblemPlanner(ResourcePlanner):
             duration = task_info["duration"]
 
             # Authorized resources for this task
-            allowed_roles = manager.activity_permissions.get(activity, set())
-            authorized = set()
-            for rid in allowed_roles:
-                for res in manager.roles.get(rid, []):
-                    authorized.add(res)
+            authorized = self._get_authorized_resources_for_activity(manager, activity)
 
             # Costs for real resources
             auth_costs = []

@@ -133,12 +133,20 @@ class BatchPlanner(ResourcePlanner):
         case_id = kwargs.get("case_id", f"unknown_{id(kwargs)}")
         task_id = f"{case_id}_{activity}"
 
+        # System resources (bots): assign immediately, skip batching
+        allowed_roles = manager.activity_permissions.get(activity, set())
+        if -1 in allowed_roles and -1 in manager.roles:
+            return random.choice(manager.roles[-1])
+
         # Check: Was this task already assigned in a previous batch round?
         if task_id in self.batch_assignments:
             resource = self.batch_assignments.pop(task_id)
             if task_id in self.pending_tasks:
                 del self.pending_tasks[task_id]
             return resource
+
+        # Check if this is a retry (task was already registered before)
+        is_retry = task_id in self.pending_tasks
 
         # Register task
         self.pending_tasks[task_id] = {
@@ -149,7 +157,7 @@ class BatchPlanner(ResourcePlanner):
         }
 
         # Batch full?
-        if len(self.pending_tasks) >= self.k:
+        if len(self.pending_tasks) >= self.k or is_retry:
             self._solve_batch(manager, current_sim_time)
 
             # Check if THIS task was assigned
@@ -163,8 +171,6 @@ class BatchPlanner(ResourcePlanner):
 
     def _solve_batch(self, manager, current_sim_time):
         """Greedy: Sort tasks by priority, assign best available resource."""
-        from datetime import timedelta
-
         real_time = manager.simulation_start_time + timedelta(seconds=current_sim_time)
         assigned_resources = set()
 
@@ -209,6 +215,11 @@ class AssignmentProblemPlanner(ResourcePlanner):
         case_id = kwargs.get("case_id", f"unknown_{id(kwargs)}")
         task_id = f"{case_id}_{activity}"
 
+        # System resources (bots): assign immediately, skip assignment problem
+        allowed_roles = manager.activity_permissions.get(activity, set())
+        if -1 in allowed_roles and -1 in manager.roles:
+            return random.choice(manager.roles[-1])
+
         # 2. Register task (or update on retry)
         self.pending_tasks[task_id] = {
             "activity": activity,
@@ -245,7 +256,7 @@ class AssignmentProblemPlanner(ResourcePlanner):
         # 7. Interpret result
         if (
             assigned_col is not None and assigned_col < n_resources
-        ):  # Wenn assigned_col >= n_resources (z.B. assigned_col=4, n_resources=3) → Dummy!
+        ):  # assigned_col >= n_resources means dummy was assigned
             # Real resource assigned
             assigned_resource = all_resources[assigned_col]
             del self.pending_tasks[task_id]
@@ -310,15 +321,20 @@ class AssignmentProblemPlanner(ResourcePlanner):
                     # R_working: resource is present (actively working)
                     remaining = (busy_time - real_time).total_seconds()
                     cost = duration + remaining
-                elif resource in getattr(manager, 'system_resources', set()):
+                elif resource in getattr(manager, "system_resources", set()):
                     # System resource (bot): always available
                     cost = duration
                 else:
                     # Not working, not a bot → check heatmap + capacity
-                    if manager.is_resource_available(resource, real_time, duration):
-                        cost = duration    # R_available
+                    checker = getattr(
+                        manager,
+                        "is_resource_available_deterministic",
+                        manager.is_resource_available,
+                    )
+                    if checker(resource, real_time, duration):
+                        cost = duration  # R_available
                     else:
-                        cost = BIG         # R_unavailable → exclude
+                        cost = BIG  # R_unavailable → exclude
 
                 cost_matrix[i, j] = cost
                 auth_costs.append(duration)  # c(t,r) for average computation
@@ -477,6 +493,23 @@ class AdvancedResourceManager(BaseResourceManager):
             return False
 
         # 2. Capacity Constraint
+        date_key = current_time.strftime("%Y-%m-%d")
+        used = self.daily_work_seconds.get(resource, {}).get(date_key, 0)
+        return (used + duration) <= self.daily_effort_capacities.get(resource, 28800)
+
+    def is_resource_available_deterministic(
+        self, resource: str, current_time: datetime, duration: float
+    ) -> bool:
+        """Deterministic availability check for cost matrix construction."""
+        if resource in self.system_resources:
+            return True
+        prob = (
+            self.availability_matrix.get(resource, {})
+            .get(current_time.weekday(), {})
+            .get(current_time.hour, 0.0)
+        )
+        if prob < 0.3:
+            return False
         date_key = current_time.strftime("%Y-%m-%d")
         used = self.daily_work_seconds.get(resource, {}).get(date_key, 0)
         return (used + duration) <= self.daily_effort_capacities.get(resource, 28800)

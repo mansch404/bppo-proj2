@@ -251,7 +251,7 @@ class AssignmentProblemPlanner(ResourcePlanner):
     Uses scipy.optimize.linear_sum_assignment (Hungarian algorithm, O(n³)).
     """
 
-    def __init__(self, delta=1.2):
+    def __init__(self, delta=1.4):
         self.delta = delta
         self.pending_tasks = {}  # task_id → {activity, sim_time, duration, kwargs}
         self._activity_authorized_resources_cache: Dict[str, Set[str]] = {}
@@ -319,7 +319,9 @@ class AssignmentProblemPlanner(ResourcePlanner):
         task_id = self._build_task_id(case_id, activity)
         self._remove_task(task_id)
 
-    def _get_authorized_resources_for_activity(self, manager, activity: str) -> Set[str]:
+    def _get_authorized_resources_for_activity(
+        self, manager, activity: str
+    ) -> Set[str]:
         cached = self._activity_authorized_resources_cache.get(activity)
         if cached is not None:
             return cached

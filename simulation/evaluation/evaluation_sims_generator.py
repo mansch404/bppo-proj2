@@ -27,11 +27,11 @@ resource allocation methods.
 # 1. DEFINE EVALUATION SETTINGS
 SETTINGS = {
     "sim_start": datetime(2016, 1, 1, 8, 0, 0),
-    "sim_end": datetime(2016, 2, 1, 8, 0, 0),  # 3 months to ensure we get >2500 cases
+    "sim_end": datetime(2016, 2, 1, 8, 0, 0),  # 1 Month
     "base_random_seed": 42,
-    "warm_up_cases": 500,
-    "evaluation_cases": 2000,
-    "runs_per_method": 1  # Start small for testing
+    "warm_up_cases": 200,
+    "evaluation_cases": 1000,
+    "runs_per_method": 15  # Start small for testing
 }
 
 # Map strings to the actual class implementations you built

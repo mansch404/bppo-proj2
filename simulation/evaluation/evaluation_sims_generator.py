@@ -10,12 +10,14 @@ from simulation.spawner.dynamic_spawner import DynamicSpawner_KDE
 from simulation.engine.engine import SimulationEngine
 from simulation.resource_manager.resource_manager import AdvancedResourceManager
 from simulation.resource_manager.resource_manager import (
+    AdvancedOptimizationPlanner,
+    AdvancedResourceManager,
+    AssignmentProblemPlanner,
+    BatchPlanner,
+    ShortestQueuePlanner,
+    CaseHandlingPlanner,
     RandomPlanner,
     RoundRobinPlanner,
-    ShortestQueuePlanner,
-    BatchPlanner,
-    AdvancedOptimizationPlanner,
-    AssignmentProblemPlanner
 )
 '''
 This script generates simulation-logs using all different 
@@ -25,11 +27,11 @@ resource allocation methods.
 # 1. DEFINE EVALUATION SETTINGS
 SETTINGS = {
     "sim_start": datetime(2016, 1, 1, 8, 0, 0),
-    "sim_end": datetime(2016, 2, 1, 8, 0, 0),  # 6 months to ensure we get >2500 cases
+    "sim_end": datetime(2016, 2, 1, 8, 0, 0),  # 3 months to ensure we get >2500 cases
     "base_random_seed": 42,
     "warm_up_cases": 500,
     "evaluation_cases": 2000,
-    "runs_per_method": 2  # Start small (e.g., 5) for testing, increase to 30 for final report
+    "runs_per_method": 1  # Start small for testing
 }
 
 # Map strings to the actual class implementations you built
@@ -49,7 +51,7 @@ ORG_CONTEXT = {
     "sla_threshold_seconds": 3600,
 }
 
-eval_log_dir_name = "eval_logs_1"
+eval_log_dir_name = "eval_logs_test" # Change for creating new folder
 
 def run_sims_for_evaluations():
 
@@ -92,7 +94,6 @@ def run_sims_for_evaluations():
                 simulation_start_time=SETTINGS["sim_start"],
                 strategy=chosen_strategy
             )
-            resource_manager.mine_organizational_model(df)  # Might need to adapt if mining is slow
 
             # Set retry intervals just like in main.py
             if isinstance(chosen_strategy, AssignmentProblemPlanner):
@@ -115,7 +116,7 @@ def run_sims_for_evaluations():
             output_log_name = f"{eval_log_dir_name}/{method_name}_run_{run_index}.csv"
 
             # Initialize Engine
-            # Evaluation behavior is handled in this script via clean-and-aggregate steps,
+            # evaluation behavior is handled in this script via clean-and-aggregate steps,
             # not through a dedicated SimulationEngine evaluation flag.
             engine = SimulationEngine(
                 net=net,

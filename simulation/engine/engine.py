@@ -46,9 +46,10 @@ class SimulationEngine:
         simulation_end_datetime: datetime = None,  # <--- New argument
         original_log_path: str = "",
         resource_manager = None, # <--- NEW ARGUMENT
-        spawner = None, # <--- New argument
-        spawner_advanced: bool = False, # <--- New argument
-        list_of_arrivals = None # <--- New argument
+        spawner = None,
+        spawner_advanced: bool = False,
+        list_of_arrivals = None,
+        evaluation_flag: bool = False # <--- NEW ARGUMENT
     ):
         self.env = simpy.Environment()
         self.net = net
@@ -57,6 +58,7 @@ class SimulationEngine:
         self.event_logger = EventLogger(event_log_path)
         self.case_counter = 0
         self.metric_records = []
+
 
         self.resource_manager = resource_manager
 
@@ -74,19 +76,20 @@ class SimulationEngine:
 
         self.use_advanced_model = use_advanced_model
 
-        # Spawner (Task 1.2)
-        self.spawner_advanced = spawner_advanced # True if advanced approach
-        if self.spawner_advanced:
-            self.spawner = DynamicSpawner_KDE()
-            self.spawner.fit_with_event_log_path(original_log_path)
-        else:
-            self.spawner = StaticSpawner()
-            self.spawner.fit_with_log_path(original_log_path)
+        if evaluation_flag is False: # If engine is used for evaluation, the spawner is not initialized and no list of arrivals is generated
+            # Spawner (Task 1.2)
+            self.spawner_advanced = spawner_advanced # True if advanced approach
+            if self.spawner_advanced:
+                self.spawner = DynamicSpawner_KDE()
+                self.spawner.fit_with_event_log_path(original_log_path)
+            else:
+                self.spawner = StaticSpawner()
+                self.spawner.fit_with_log_path(original_log_path, True)
 
 
 
-        # Generate a list of arrivals (as datetimes) for the simulation
-        self.list_of_arrivals = self.spawner.generate_arrivals(simulation_start_datetime, simulation_end_datetime)
+            # Generate a list of arrivals (as datetimes) for the simulation
+            self.list_of_arrivals = self.spawner.generate_arrivals(simulation_start_datetime, simulation_end_datetime)
 
 
         # Branching (Task 1.4)

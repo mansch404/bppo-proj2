@@ -153,14 +153,14 @@ class StaticSpawner:
             for i in range(len(grouped_dates)):
                 star_date = grouped_dates['start_date'][i]
                 end_date = grouped_dates['end_date'][i]
-                while generated_arrivals[-1] < end_date:
+                while generated_arrivals[-1] < end_date.replace(tzinfo=None): # CHANGE
                     generated_arrivals.append(generated_arrivals[-1] + timedelta(seconds=self.generate_next(current_dist=i)))
 
             return generated_arrivals
 
         else:
 
-            while generated_arrivals[-1] < end_date:
+            while generated_arrivals[-1] < end_date.replace(tzinfo=None): # CHANGE
                 generated_arrivals.append(generated_arrivals[-1] + timedelta(seconds=self.generate_next()))
 
             return generated_arrivals

@@ -17,7 +17,6 @@ from simulation.resource_manager.resource_manager import (
 )
 from simulation.resource_manager.metrics import compute_optimization_metrics
 
-
 def report_optimization_metrics(
     engine: SimulationEngine,
     resource_manager: AdvancedResourceManager,
@@ -46,7 +45,6 @@ def report_optimization_metrics(
     print(f"[METRICS] Saved to {output_path}")
     return metrics
 
-
 def main():
     """Run simulation with Petri Net process model"""
 
@@ -67,7 +65,7 @@ def main():
     # set the start time for the NEW simulation
     sim_start = datetime(2016, 1, 1, 8, 0, 0)
     sim_end = datetime(
-        2016, 4, 1, 8, 0, 0
+        2016, 2, 1, 8, 0, 0
     )  # Used for arrival generation in spawner class
 
     chosen_strategy = AdvancedOptimizationPlanner()
@@ -146,4 +144,5 @@ def arrival_generator(engine, sim_start):
 
 
 if __name__ == "__main__":
-    main()
+    metrics = main()
+    print(metrics)

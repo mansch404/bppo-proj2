@@ -129,7 +129,8 @@ def run_sims_for_evaluations():
                 use_advanced_model=True,
                 resource_manager=resource_manager,
                 original_log_path=training_data_path,
-                spawner_advanced=True
+                spawner_advanced=True,
+                evaluation_flag=True,
             )
 
             # 3. OVERWRITE the internally generated arrivals with global list

@@ -82,14 +82,14 @@ class SimulationEngine:
 
         # Spawner (Task 1.2)
         self.spawner_advanced = spawner_advanced  # True if advanced approach
-        if self.spawner_advanced:
-            self.spawner = DynamicSpawner_KDE()
-            self.spawner.fit_with_event_log_path(original_log_path)
-        else:
-            self.spawner = StaticSpawner()
-            self.spawner.fit_with_log_path(original_log_path)
 
         if not evaluation_flag:
+            if self.spawner_advanced:
+                self.spawner = DynamicSpawner_KDE()
+                self.spawner.fit_with_event_log_path(original_log_path)
+            else:
+                self.spawner = StaticSpawner()
+                self.spawner.fit_with_log_path(original_log_path)
             # Normal run: Generate a list of arrivals (as datetimes) for the simulation
             self.list_of_arrivals = self.spawner.generate_arrivals(
                 self.simulation_start_datetime, self.simulation_end_datetime

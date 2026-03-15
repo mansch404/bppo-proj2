@@ -27,7 +27,10 @@ try:
         load_models as load_quantile_models,
     )
 except ImportError:
-    print("Warning: Could not import advanced_processing_time. Advanced mode will fail if enabled.")
+    print(
+        "Warning: Could not import advanced_processing_time. Advanced mode will fail if enabled."
+    )
+
 
 class SimulationEngine:
     def __init__(
@@ -45,20 +48,20 @@ class SimulationEngine:
         simulation_start_datetime: datetime = None,
         simulation_end_datetime: datetime = None,  # <--- New argument
         original_log_path: str = "",
-        resource_manager = None, # <--- NEW ARGUMENT
-        spawner = None,
-        spawner_advanced: bool = False,
-        list_of_arrivals = None,
-        evaluation_flag: bool = False # <--- NEW ARGUMENT
+        resource_manager=None,  # <--- NEW ARGUMENT
+        spawner=None,  # <--- New argument
+        spawner_advanced: bool = False,  # <--- New argument
+        list_of_arrivals=None,  # <--- New argument
     ):
         self.env = simpy.Environment()
         self.net = net
         self.initial_marking = initial_marking
         self.final_marking = final_marking
-        self.event_logger = EventLogger(event_log_path)
+        self.event_logger = EventLogger(
+            event_log_path, start_time=simulation_start_datetime
+        )
         self.case_counter = 0
         self.metric_records = []
-
 
         self.resource_manager = resource_manager
 
@@ -76,21 +79,19 @@ class SimulationEngine:
 
         self.use_advanced_model = use_advanced_model
 
-        if evaluation_flag is False: # If engine is used for evaluation, the spawner is not initialized and no list of arrivals is generated
-            # Spawner (Task 1.2)
-            self.spawner_advanced = spawner_advanced # True if advanced approach
-            if self.spawner_advanced:
-                self.spawner = DynamicSpawner_KDE()
-                self.spawner.fit_with_event_log_path(original_log_path)
-            else:
-                self.spawner = StaticSpawner()
-                self.spawner.fit_with_log_path(original_log_path, True)
+        # Spawner (Task 1.2)
+        self.spawner_advanced = spawner_advanced  # True if advanced approach
+        if self.spawner_advanced:
+            self.spawner = DynamicSpawner_KDE()
+            self.spawner.fit_with_event_log_path(original_log_path)
+        else:
+            self.spawner = StaticSpawner()
+            self.spawner.fit_with_log_path(original_log_path)
 
-
-
-            # Generate a list of arrivals (as datetimes) for the simulation
-            self.list_of_arrivals = self.spawner.generate_arrivals(simulation_start_datetime, simulation_end_datetime)
-
+        # Generate a list of arrivals (as datetimes) for the simulation
+        self.list_of_arrivals = self.spawner.generate_arrivals(
+            simulation_start_datetime, simulation_end_datetime
+        )
 
         # Branching (Task 1.4)
         # branching_mode: "none" | "basic" | "advanced"
@@ -105,10 +106,13 @@ class SimulationEngine:
             elif original_log_path:
                 # Fit directly from the original log (XES/CSV)
                 if self.branching_mode == "basic":
-                    self.branching_model = BranchingBasic().fit_from_event_log(original_log_path)
+                    self.branching_model = BranchingBasic().fit_from_event_log(
+                        original_log_path
+                    )
                 else:
-                    self.branching_model = BranchingAdvanced().fit_from_event_log(original_log_path, net, initial_marking)
-
+                    self.branching_model = BranchingAdvanced().fit_from_event_log(
+                        original_log_path, net, initial_marking
+                    )
 
         self.default_case_attributes = case_attributes or {
             "RequestedAmount": 15000.0,
@@ -130,7 +134,9 @@ class SimulationEngine:
         print(f"\nSimulation Engine initialized:")
         print(f"  Places: {len(net.places)}")
         print(f"  Transitions: {len(net.transitions)}")
-        print(f"  Processing time model: {'Advanced' if self.use_advanced_model else 'Basic'}")
+        print(
+            f"  Processing time model: {'Advanced' if self.use_advanced_model else 'Basic'}"
+        )
         print(f"  Resource Manager attached: {self.resource_manager is not None}")
 
     def _get_current_datetime(self) -> datetime:
@@ -183,7 +189,7 @@ class SimulationEngine:
             "case_start_time": self.env.now,
             "previous_activity": "START",
             "event_nr": 0,
-            "history": [], # <-- New Context
+            "history": [],  # <-- New Context
             "case_attributes": case_attributes,
             "offer_info": {
                 "CreditScore": None,
@@ -205,7 +211,9 @@ class SimulationEngine:
                 print(f"Warning: {case_id} reached deadlock")
                 break
 
-            transition = self.choose_transition(enabled, marking=marking, case_context=case_context)
+            transition = self.choose_transition(
+                enabled, marking=marking, case_context=case_context
+            )
 
             # --- CHANGE: Process the transition logic inside fire_transition ---
             yield self.env.process(
@@ -235,7 +243,7 @@ class SimulationEngine:
         *,
         marking: Optional[Marking] = None,
         case_context: Optional[Dict] = None,
-        ) -> PetriNet.Transition:
+    ) -> PetriNet.Transition:
         """
         Select which enabled transition to fire
 
@@ -289,7 +297,9 @@ class SimulationEngine:
                 return random.choice(visible)
 
         # Basic: model chooses next activity label, then map to a transition
-        if self.branching_mode == "basic" and hasattr(self.branching_model, "choose_next"):
+        if self.branching_mode == "basic" and hasattr(
+            self.branching_model, "choose_next"
+        ):
             try:
                 enabled_labels = [str(t.label) for t in visible]
                 chosen_label = self.branching_model.choose_next(
@@ -298,12 +308,13 @@ class SimulationEngine:
                     default_strategy="uniform",
                 )
                 candidates = [t for t in visible if str(t.label) == str(chosen_label)]
-                return random.choice(candidates) if candidates else random.choice(visible)
+                return (
+                    random.choice(candidates) if candidates else random.choice(visible)
+                )
             except Exception:
                 return random.choice(visible)
 
         return random.choice(visible)
-
 
     def fire_transition(
         self, case_id: str, transition: PetriNet.Transition, case_context: Dict
@@ -339,13 +350,17 @@ class SimulationEngine:
                     sim_time=self.env.now,
                     duration=processing_time,
                     case_id=case_id,  # important for CaseHandlingPlanner
-                    amount=case_context["case_attributes"].get("RequestedAmount", 0)  #for Advanced Matcher
+                    amount=case_context["case_attributes"].get(
+                        "RequestedAmount", 0
+                    ),  # for Advanced Matcher
                 )
 
                 if resource is None:
                     # No one available (night time, or all busy)
                     # Wait 15 minutes (900 seconds) and check again
-                    retry_interval = getattr(self.resource_manager, 'retry_interval', 900)
+                    retry_interval = getattr(
+                        self.resource_manager, "retry_interval", 900
+                    )
                     yield self.env.timeout(retry_interval)
         else:
             # Fallback if no manager (old behavior)
@@ -396,11 +411,11 @@ class SimulationEngine:
             activity=activity_name,
             timestamp=self.env.now,
             lifecycle="start",
-            resource=resource
+            resource=resource,
         )
 
         # 5. Simulate Work
-        yield self.env.timeout(processing_time)
+        yield self.env.timeout(service_seconds)
 
         # 6. Log Completion
         self.event_logger.log_event(
@@ -408,7 +423,7 @@ class SimulationEngine:
             activity=activity_name,
             timestamp=self.env.now,
             lifecycle="complete",
-            resource=resource
+            resource=resource,
         )
 
         case_context["previous_activity"] = activity_name

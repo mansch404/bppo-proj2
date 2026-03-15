@@ -52,6 +52,7 @@ class SimulationEngine:
         spawner=None,  # <--- New argument
         spawner_advanced: bool = False,  # <--- New argument
         list_of_arrivals=None,  # <--- New argument
+        evaluation_flag: bool = False,
     ):
         self.env = simpy.Environment()
         self.net = net
@@ -88,10 +89,14 @@ class SimulationEngine:
             self.spawner = StaticSpawner()
             self.spawner.fit_with_log_path(original_log_path)
 
-        # Generate a list of arrivals (as datetimes) for the simulation
-        self.list_of_arrivals = self.spawner.generate_arrivals(
-            simulation_start_datetime, simulation_end_datetime
-        )
+        if not evaluation_flag:
+            # Normal run: Generate a list of arrivals (as datetimes) for the simulation
+            self.list_of_arrivals = self.spawner.generate_arrivals(
+                self.simulation_start_datetime, self.simulation_end_datetime
+            )
+        else:
+            # Empty list filled in evaluation script
+            self.list_of_arrivals = []
 
         # Branching (Task 1.4)
         # branching_mode: "none" | "basic" | "advanced"

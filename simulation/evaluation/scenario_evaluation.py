@@ -8,36 +8,41 @@ import concurrent.futures
 from pathlib import Path
 from datetime import datetime
 
-from simulation.resource_manager import metrics
+from simulation.resource_manager.metrics import get_default_registry
 from simulation.spawner.dynamic_spawner import DynamicSpawner_KDE
 from simulation.engine.engine import SimulationEngine
 from simulation.resource_manager.resource_manager import AdvancedResourceManager, AdvancedOptimizationPlanner, \
     RandomPlanner
 from simulation.routing.branching_basic import BranchingBasic
 
-# ==========================================
+
 # CONFIGURATION
-# ==========================================
-# CHANGE THIS VARIABLE TO CREATE A NEW FOLDER FOR NEW RUNS!
-OUTPUT_DIR = "eval_logs_test"#"eval_logs_scenario_15runs_3months"
+
+OUTPUT_DIR = "eval_logs_scenario"
 
 SETTINGS = {
     "sim_start": datetime(2016, 1, 1, 8, 0, 0),
-    "sim_end": datetime(2016, 4, 1, 8, 0, 0),
+    "sim_end": datetime(2016, 2, 1, 8, 0, 0),  # 1 Month duration
     "base_random_seed": 42,
-    "warm_up_cases": 500,
-    "evaluation_cases": 2500,
-    "runs_per_scenario": 1  # Bump to 30 for final report
+    "warm_up_cases": 200,  # Adjusted for 1 month
+    "evaluation_cases": 1000,  # Adjusted for 1 month
+    "runs_per_scenario": 15  # Number of parallel runs
 }
 
-ORG_CONTEXT = {"capacities": {}, "system_resources": set()}
+ORG_CONTEXT = {
+    "capacities": {},
+    "system_resources": set(),
+    "automation_eligible_activities": set(),
+    "daily_work_seconds": {}  # Stores the worker data for the metrics
+}
 
-# PUT YOUR TWO IDENTIFIED EMPLOYEES HERE
+# --- UPDATE THESE NAMES BASED ON YOUR HISTORICAL SCRIPT ---
 SCENARIOS = {
     "Baseline": [],
-    "Reduced_Staff": ["User_111", "User_110"]  # These are the employees to be fired
+    "Reduced_Staff": ["User_111", "User_110"]  # <--- Change to the two you are firing
 }
 
+# FUNCTIONS
 
 def fire_employees(resource_manager, employees_to_fire):
     """Surgically removes specific employees from the mined organizational model."""
@@ -62,7 +67,6 @@ def run_scenario_simulation(args):
     random.seed(current_seed)
     np.random.seed(current_seed)
 
-    # BEST resource planner
     resource_manager = AdvancedResourceManager(
         simulation_start_time=SETTINGS["sim_start"],
         strategy=AdvancedOptimizationPlanner()
@@ -70,7 +74,6 @@ def run_scenario_simulation(args):
 
     resource_manager.mine_organizational_model(df)
 
-    # Apply the firing condition if applicable
     if fired_list:
         fire_employees(resource_manager, fired_list)
 
@@ -88,7 +91,7 @@ def run_scenario_simulation(args):
         simulation_end_datetime=SETTINGS["sim_end"],
         use_advanced_model=True,
         resource_manager=resource_manager,
-        spawner_advanced=True,
+        spawner_advanced=False,  # <--- Fix applied to bypass KDE in workers!
         evaluation_flag=True
     )
 
@@ -98,11 +101,16 @@ def run_scenario_simulation(args):
     engine.env.process(arrival_generator(engine, SETTINGS["sim_start"]))
     duration_seconds = (SETTINGS["sim_end"] - SETTINGS["sim_start"]).total_seconds()
 
-    print(f"  -> Running {scenario_name} (Run {run_index + 1})...")
     engine.run(until=duration_seconds)
 
     clean_and_save_records(engine.metric_records, f"Scenario_{scenario_name}", run_index + 1)
-    return f"Completed {scenario_name} - Run {run_index + 1}"
+
+    # --- Capture the daily work usage for the advanced metrics ---
+    daily_work_seconds_clean = {
+        res: dict(usage) for res, usage in resource_manager.daily_work_seconds.items()
+    }
+
+    return scenario_name, run_index + 1, daily_work_seconds_clean
 
 
 def clean_and_save_records(records_list, method_name, run_index):
@@ -114,7 +122,6 @@ def clean_and_save_records(records_list, method_name, run_index):
         valid_case_ids = case_starts.iloc[warm_up: warm_up + eval_cases]['case'] if len(case_starts) >= (
                     warm_up + eval_cases) else case_starts.iloc[warm_up:]['case']
 
-        # Save using the dynamic OUTPUT_DIR
         df[df['case'].isin(valid_case_ids)].to_csv(Path(f"{OUTPUT_DIR}/{method_name}_run_{run_index}_CLEAN.csv"),
                                                    index=False)
     except Exception as e:
@@ -137,7 +144,13 @@ def main():
     ORG_CONTEXT["capacities"] = dummy_manager.daily_effort_capacities
     ORG_CONTEXT["system_resources"] = dummy_manager.system_resources
 
-    # 2. Pre-fit branching model using dynamic OUTPUT_DIR
+    # Grab automation permissions for the metrics module
+    ORG_CONTEXT["automation_eligible_activities"] = {
+        act for act, role_ids in dummy_manager.activity_permissions.items() if -1 in role_ids
+    }
+
+    # 2. Pre-fit branching model
+    print("Pre-fitting components...")
     branching_model = BranchingBasic().fit_from_event_log(training_data_path)
     branching_path_obj = Path(OUTPUT_DIR) / "pre_fitted_branching.pkl"
     branching_path_obj.parent.mkdir(parents=True, exist_ok=True)
@@ -161,19 +174,39 @@ def main():
                 (run_index, scenario_name, fired_list, global_arrivals, net, initial_marking, final_marking, df,
                  branching_path))
 
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        for future in concurrent.futures.as_completed([executor.submit(run_scenario_simulation, arg) for arg in tasks]):
-            print(f"✅ {future.result()}")
+    print(f"\nLaunching {len(tasks)} parallel scenario simulations...")
+    with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(run_scenario_simulation, arg) for arg in tasks]
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                scenario_name, run_idx, daily_work = future.result()
+                # Store the worker's data so the metrics registry can use it
+                ORG_CONTEXT["daily_work_seconds"][f"{scenario_name}_{run_idx}"] = daily_work
+                print(f"✅ Completed {scenario_name} - Run {run_idx}")
+            except Exception as e:
+                print(f"❌ Error: {e}")
 
     # 4. Metrics Aggregation
     print("\n" + "=" * 50 + "\nSCENARIO IMPACT REPORT\n" + "=" * 50)
     final_report_data = []
+    registry = get_default_registry()
+
     for scenario_name in SCENARIOS.keys():
         run_metrics = []
         for run_index in range(SETTINGS["runs_per_scenario"]):
-            clean_log_path = Path(f"{OUTPUT_DIR}/Scenario_{scenario_name}_run_{run_index + 1}_CLEAN.csv")
+            run_idx = run_index + 1
+            clean_log_path = Path(f"{OUTPUT_DIR}/Scenario_{scenario_name}_run_{run_idx}_CLEAN.csv")
             if clean_log_path.exists() and not (df_clean := pd.read_csv(clean_log_path)).empty:
-                run_metrics.append(metrics.compute_optimization_metrics(df_clean, ORG_CONTEXT["capacities"], 3600))
+                # Fetch specific run history
+                daily_work = ORG_CONTEXT["daily_work_seconds"].get(f"{scenario_name}_{run_idx}", {})
+
+                run_metrics.append(registry.compute_all(
+                    df=df_clean,
+                    capacities=ORG_CONTEXT["capacities"],
+                    sla_threshold_seconds=3600,
+                    daily_work_seconds=daily_work,
+                    automation_eligible_activities=ORG_CONTEXT["automation_eligible_activities"]
+                ))
 
         if run_metrics:
             avg_metrics = {"Scenario": scenario_name}
@@ -183,20 +216,18 @@ def main():
 
     if final_report_data:
         report_df = pd.DataFrame(final_report_data)
+        # Score calculation
+        if "Service Level <=60min (%)" in report_df.columns and "Weighted Fairness (Jain, humans)" in report_df.columns:
+            report_df["System Efficiency Score"] = (
+                    (report_df["Service Level <=60min (%)"] / 100) * report_df[
+                "Weighted Fairness (Jain, humans)"] * 10000 /
+                    (report_df["Avg Case Cycle Time (min)"] + report_df["Avg Wait Time (min)"])
+            )
 
-        # --- CUSTOM METRIC CALCULATION ---
-        # Calculate the System Efficiency Score (Higher is Better)
-        report_df["System Efficiency Score"] = (
-                (report_df["Service Level <=60min (%)"] / 100) * report_df["Weighted Fairness (Jain, humans)"] * 10000 /
-                (report_df["Avg Case Cycle Time (min)"] + report_df["Avg Wait Time (min)"])
-        )
-
-        # Print and Save
         print(report_df.to_string(index=False))
         report_df.to_csv(f"{OUTPUT_DIR}/SCENARIO_IMPACT_METRICS.csv", index=False)
 
 
 if __name__ == "__main__":
-    # Create the directory dynamically before running anything else
     Path(OUTPUT_DIR).mkdir(exist_ok=True)
     main()

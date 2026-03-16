@@ -21,7 +21,7 @@ from ..spawner.static_distribution import StaticSpawner
 
 # Import inference functions from advanced_processing_time module
 try:
-    from timing.advanced_processing_time import (
+    from ..timing.advanced_processing_time import (
         predict_processing_time_distribution,
         sample_from_quantiles,
         load_models as load_quantile_models,

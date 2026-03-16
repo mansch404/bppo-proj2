@@ -2,6 +2,9 @@ import pandas as pd
 import numpy as np
 import pm4py
 import random
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Set, Any
 from abc import ABC, abstractmethod
@@ -411,6 +414,118 @@ class AssignmentProblemPlanner(ResourcePlanner):
             cost_matrix[i, n_resources + i] = dummy_cost
 
         return cost_matrix
+
+
+class PolicyNetwork(nn.Module):
+    """The 'Brain' of the Middelhuis et al. strategy."""
+
+    def __init__(self, in_dim, h_dim, out_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(in_dim, h_dim),
+            nn.ReLU(),
+            nn.Linear(h_dim, h_dim),
+            nn.ReLU(),
+            nn.Linear(h_dim, out_dim)  # Logits for each resource
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class DeepRLPlanner(ResourcePlanner):
+    def __init__(self, all_resource_names: List[str], model_path: Optional[str] = None, is_training: bool = False):
+        self.resource_list = sorted(all_resource_names)
+        self.actions = self.resource_list + ["STRATEGIC_WAIT"]
+        self.res_to_idx = {res: i for i, res in enumerate(self.actions)}
+        self.is_training = is_training
+
+        # FIXED: Recalculate input_dim to 159 (len + 10)
+        # len(resources) + 1 (age) + 1 (amount) + 1 (queue) + 2 (time) + 5 (act) = len + 10
+        self.input_dim = len(self.resource_list) + 10
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = PolicyNetwork(self.input_dim, 128, len(self.actions)).to(self.device)
+
+        self.saved_log_probs = []
+        if model_path:
+            self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        if not self.is_training:
+            self.model.eval()
+
+    def _get_state_vector(self, manager, activity, duration, kwargs):
+        now = manager.simulation_start_time + timedelta(seconds=kwargs.get('sim_time', 0))
+
+        # 1. Resource Busy Times
+        res_busy = []
+        for r in self.resource_list:
+            until = manager.busy_until.get(r, manager.simulation_start_time)
+            wait = max(0, (until - now).total_seconds()) / 3600.0
+            res_busy.append(min(wait, 24.0) / 24.0)
+
+        # 2. Urgency Feature
+        arrival_time = kwargs.get("arrival_time", now)
+        if isinstance(arrival_time, (int, float)):
+            arrival_time = manager.simulation_start_time + timedelta(seconds=arrival_time)
+        task_age = [(now - arrival_time).total_seconds() / 3600.0]
+
+        # 3. Contextual Features
+        amount = [kwargs.get("amount", 0) / 50000.0]
+        queue_len = [len(getattr(manager.strategy, "pending_tasks", {})) / 50.0]
+        time_feat = [now.hour / 24.0, now.weekday() / 7.0]
+
+        act_map = {"A_Create Application": 0, "W_Complete application": 1, "A_Accepted": 2, "O_Create Offer": 3}
+        act_feat = [0.0] * 5
+        idx = act_map.get(activity, 4)
+        act_feat[idx] = 1.0
+
+        # Total features: 149 + 1 + 1 + 1 + 2 + 5 = 159
+        state = res_busy + task_age + amount + queue_len + time_feat + act_feat
+        return torch.FloatTensor(state).to(self.device)
+
+    def select_resource(self, manager, activity, current_sim_time, duration, **kwargs):
+        kwargs['sim_time'] = current_sim_time
+
+        # 1. Get candidates
+        real_time = manager.simulation_start_time + timedelta(seconds=current_sim_time)
+        candidates = manager.get_available_authorized_candidates(activity, real_time, duration)
+
+        # SPEED OPTIMIZATION: Only skip the NN if we are NOT training.
+        # During training, we need the NN to make the choice to learn from it.
+        if len(candidates) == 1 and not self.is_training:
+            return candidates[0]
+
+        if not candidates and not self.is_training:
+            return None
+
+        # 2. Vectorize state (This will produce 159 features)
+        state = self._get_state_vector(manager, activity, duration, kwargs)
+
+        with torch.no_grad() if not self.is_training else torch.enable_grad():
+            logits = self.model(state)
+
+            # Action Mapping
+            available_actions = candidates + ["STRATEGIC_WAIT"]
+            mask = torch.full_like(logits, float('-inf'))
+            for action in available_actions:
+                mask[self.res_to_idx[action]] = 0.0
+
+            # Wait Bias (only during evaluation)
+            if not self.is_training:
+                logits[self.res_to_idx["STRATEGIC_WAIT"]] -= 0.5
+
+            probs = torch.softmax(logits + mask, dim=-1)
+
+            if self.is_training:
+                m = torch.distributions.Categorical(probs)
+                action_idx = m.sample()
+                self.saved_log_probs.append(m.log_prob(action_idx))
+                chosen_action = self.actions[action_idx.item()]
+            else:
+                chosen_action = self.actions[torch.argmax(probs).item()]
+
+        return None if chosen_action == "STRATEGIC_WAIT" else chosen_action
+
 
 
 # =================================================================

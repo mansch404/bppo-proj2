@@ -38,6 +38,7 @@ try:
         CaseHandlingPlanner,
         RandomPlanner,
         RoundRobinPlanner,
+        DeepRLPlanner,
     )
 except ImportError:
     from metrics import get_default_registry
@@ -49,6 +50,7 @@ except ImportError:
         CaseHandlingPlanner,
         RandomPlanner,
         RoundRobinPlanner,
+        DeepRLPlanner,
     )
 
 
@@ -409,14 +411,14 @@ class FullScaleEvaluator:
         return result
 
     def run_seeded_study(
-        self,
-        *,
-        num_cases: int = DEFAULT_NUM_CASES,
-        seeds: Optional[Sequence[int]] = None,
-        sla_threshold_seconds: int = 3600,
-        batch_wait_cap_seconds: float = DEFAULT_BATCH_WAIT_CAP_SECONDS,
-        assignment_wait_cap_seconds: float = DEFAULT_ASSIGNMENT_WAIT_CAP_SECONDS,
-        reuse_mined_model: bool = True,
+            self,
+            *,
+            num_cases: int = DEFAULT_NUM_CASES,
+            seeds: Optional[Sequence[int]] = None,
+            sla_threshold_seconds: int = 3600,
+            batch_wait_cap_seconds: float = DEFAULT_BATCH_WAIT_CAP_SECONDS,
+            assignment_wait_cap_seconds: float = DEFAULT_ASSIGNMENT_WAIT_CAP_SECONDS,
+            reuse_mined_model: bool = True,
     ) -> pd.DataFrame:
         """
         Run all strategies over all seeds and return raw per-run metrics.
@@ -425,7 +427,16 @@ class FullScaleEvaluator:
         if not tasks:
             return pd.DataFrame()
 
+        # Extract all unique resource names from the template
+        # This ensures the DeepRLPlanner knows the size of its input/output layers
+        all_resources = []
+        if "roles" in self._manager_template:
+            for role_resources in self._manager_template["roles"].values():
+                all_resources.extend(role_resources)
+        all_resources = sorted(list(set(all_resources)))
+
         run_seeds = list(range(DEFAULT_NUM_SEEDS)) if seeds is None else list(seeds)
+
         strategies: List[Tuple[str, Callable[[], object]]] = [
             ("Basic: Random", RandomPlanner),
             ("Heuristic: Round-Robin", RoundRobinPlanner),
@@ -433,6 +444,12 @@ class FullScaleEvaluator:
             ("Batch: Greedy k=5", lambda: BatchPlanner(k=5)),
             ("Advanced: Assignment Problem", lambda: AssignmentProblemPlanner(delta=1.2)),
             ("Advanced: OR-Optimized", AdvancedOptimizationPlanner),
+            # Pass the extracted resource list to the DRL Planner
+            ("Advanced: Deep RL (Trained)", lambda: DeepRLPlanner(
+                all_resource_names=all_resources,
+                model_path="rl_model_best.pt",
+                is_training=False
+            )),
         ]
 
         all_results = []
@@ -440,8 +457,12 @@ class FullScaleEvaluator:
             for strategy_name, factory in strategies:
                 print(f"Seed {seed:02d} | Testing {strategy_name} ...")
                 t0 = time.perf_counter()
+
+                # Create a fresh instance of the planner for this specific seed
+                planner_instance = factory()
+
                 metrics = self.run_experiment(
-                    factory(),
+                    planner_instance,
                     strategy_name,
                     tasks=tasks,
                     seed=seed,
@@ -450,6 +471,7 @@ class FullScaleEvaluator:
                     assignment_wait_cap_seconds=assignment_wait_cap_seconds,
                     reuse_mined_model=reuse_mined_model,
                 )
+
                 elapsed = time.perf_counter() - t0
                 print(
                     f"Seed {seed:02d} | Done {strategy_name} in {elapsed:.2f}s | "

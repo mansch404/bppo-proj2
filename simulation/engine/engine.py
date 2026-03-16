@@ -21,7 +21,7 @@ from ..spawner.static_distribution import StaticSpawner
 
 # Import inference functions from advanced_processing_time module
 try:
-    from timing.advanced_processing_time import (
+    from ..timing.advanced_processing_time import (
         predict_processing_time_distribution,
         sample_from_quantiles,
         load_models as load_quantile_models,
@@ -52,7 +52,7 @@ class SimulationEngine:
         spawner=None,  # <--- New argument
         spawner_advanced: bool = False,  # <--- New argument
         list_of_arrivals=None,  # <--- New argument
-        evaluation_flag: bool = False,
+        evaluation_flag: bool = False
     ):
         self.env = simpy.Environment()
         self.net = net
@@ -83,7 +83,12 @@ class SimulationEngine:
         # Spawner (Task 1.2)
         self.spawner_advanced = spawner_advanced  # True if advanced approach
 
-        if not evaluation_flag:
+        self.evaluation_flag = evaluation_flag  # True if running in evaluation mode
+        if self.evaluation_flag:
+            # Empty list filled in evaluation script
+            self.list_of_arrivals = []
+            
+        else:
             if self.spawner_advanced:
                 self.spawner = DynamicSpawner_KDE()
                 self.spawner.fit_with_event_log_path(original_log_path)
@@ -94,9 +99,7 @@ class SimulationEngine:
             self.list_of_arrivals = self.spawner.generate_arrivals(
                 self.simulation_start_datetime, self.simulation_end_datetime
             )
-        else:
-            # Empty list filled in evaluation script
-            self.list_of_arrivals = []
+            
 
         # Branching (Task 1.4)
         # branching_mode: "none" | "basic" | "advanced"

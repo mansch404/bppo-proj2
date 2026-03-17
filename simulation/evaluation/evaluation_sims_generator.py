@@ -3,26 +3,21 @@ import random
 import copy
 import numpy as np
 import pandas as pd
-from simulation.resource_manager.metrics import compute_all_metrics
 from pathlib import Path
 from datetime import datetime
+
 from simulation.spawner.dynamic_spawner import DynamicSpawner_KDE
 from simulation.engine.engine import SimulationEngine
-from simulation.resource_manager.resource_manager import AdvancedResourceManager
+from simulation.resource_manager.metrics import compute_all_metrics
 from simulation.resource_manager.resource_manager import (
-    AdvancedOptimizationPlanner,
     AdvancedResourceManager,
+    AdvancedOptimizationPlanner,
     AssignmentProblemPlanner,
     BatchPlanner,
     ShortestQueuePlanner,
-    CaseHandlingPlanner,
     RandomPlanner,
-    RoundRobinPlanner,
+    DeepRLPlanner 
 )
-'''
-This script generates simulation-logs using all different 
-resource allocation methods.
-'''
 
 # 1. DEFINE EVALUATION SETTINGS
 SETTINGS = {
@@ -31,18 +26,17 @@ SETTINGS = {
     "base_random_seed": 42,
     "warm_up_cases": 200,
     "evaluation_cases": 1000,
-    "runs_per_method": 15  # Start small for testing
+    "runs_per_method": 15
 }
 
-# Map strings to the actual class implementations you built
-STRATEGIES = {
-    "Basic_ShortestQueue": ShortestQueuePlanner,
-    "Batch_Allocation": BatchPlanner,
-    "Advanced_Optimizer": AdvancedOptimizationPlanner,
-    "Advanced_AssignmentProblem": AssignmentProblemPlanner
-}
+METHODS = [
+    "Basic_ShortestQueue",
+    "Batch_Allocation",
+    "Advanced_Optimizer",
+    "Advanced_AssignmentProblem",
+    "Advanced_DeepRL" 
+]
 
-# Store mined organizational data for the metrics function
 ORG_CONTEXT = {
     "capacities": {},
     "system_resources": set(),
@@ -51,73 +45,88 @@ ORG_CONTEXT = {
     "sla_threshold_seconds": 3600,
 }
 
-eval_log_dir_name = "eval_logs_test" # Change for creating new folder
+eval_log_dir_name = "eval_logs_resource_allocation_15runs_1month"  # Change this to your desired output directory
 
 def run_sims_for_evaluations():
-
     script_dir = Path(__file__).parent.parent
     bpmn_path = str(script_dir / "process_model.bpmn")
     training_data_path = str(script_dir.parent / "data" / "bpi-chall.xes")
 
-    # Load Process Model once
     bpmn_graph = pm4py.read_bpmn(str(bpmn_path))
     net, initial_marking, final_marking = pm4py.convert_to_petri_net(bpmn_graph)
 
-    # Pre-train organizational model to save time in the loop
     log = pm4py.read_xes(training_data_path)
     df = pm4py.convert_to_dataframe(log)
 
-    # 1. Initialize the Spawner ONCE outside the loops
+    # Pre-mine once OUTSIDE the loop to extract the resources for DeepRL
+    print("Pre-training base organizational model...")
+    dummy_manager = AdvancedResourceManager(SETTINGS["sim_start"], strategy=RandomPlanner())
+    dummy_manager.mine_organizational_model(df)
+    
+    # Extract all unique resources across all roles for DeepRL model initialization
+    all_resources = []
+    for role_resources in dummy_manager.roles.values():
+        all_resources.extend(role_resources)
+    all_resources = sorted(list(set(all_resources)))
+
+    ORG_CONTEXT["capacities"] = dummy_manager.daily_effort_capacities
+    ORG_CONTEXT["system_resources"] = dummy_manager.system_resources
+    ORG_CONTEXT["automation_eligible_activities"] = {
+        act for act, role_ids in dummy_manager.activity_permissions.items()
+        if -1 in role_ids
+    }
+
     global_spawner = DynamicSpawner_KDE()
     global_spawner.fit_with_event_log_path(training_data_path)
 
     for run_index in range(SETTINGS["runs_per_method"]):
-
         current_seed = SETTINGS["base_random_seed"] + run_index
         random.seed(current_seed)
         np.random.seed(current_seed)
 
         print(f"\n--- Starting Evaluation Run {run_index} ---")
 
-        # 2. Generate the "Ground Truth" arrivals for this specific run
-        # This list will be shared across all methods to ensure fairness
         global_arrivals = global_spawner.generate_arrivals(
             SETTINGS["sim_start"],
             SETTINGS["sim_end"]
         )
 
-        for method_name, PlannerClass in STRATEGIES.items():
+        for method_name in METHODS:
+            
+            # Instantiate the specific resource allocation strategy
+            if method_name == "Basic_ShortestQueue":
+                chosen_strategy = ShortestQueuePlanner()
+            elif method_name == "Batch_Allocation":
+                chosen_strategy = BatchPlanner()
+            elif method_name == "Advanced_Optimizer":
+                chosen_strategy = AdvancedOptimizationPlanner()
+            elif method_name == "Advanced_AssignmentProblem":
+                chosen_strategy = AssignmentProblemPlanner()
+            elif method_name == "Advanced_DeepRL":
+                model_file = str(Path(__file__).parent.parent / "rl_model_best.pt")
+                if not Path(model_file).exists():
+                    model_file = "rl_model_best.pt"
+                chosen_strategy = DeepRLPlanner(
+                    all_resource_names=all_resources, 
+                    model_path=model_file, 
+                    is_training=False
+                )
 
-            # 1. Initialize the specific resource allocation strategy for this run
-            chosen_strategy = PlannerClass()
             resource_manager = AdvancedResourceManager(
                 simulation_start_time=SETTINGS["sim_start"],
                 strategy=chosen_strategy
             )
 
-            # Set retry intervals just like in main.py
             if isinstance(chosen_strategy, AssignmentProblemPlanner):
                 resource_manager.retry_interval = 60
             elif isinstance(chosen_strategy, BatchPlanner):
                 resource_manager.retry_interval = 120
 
+            # Mine the model for this specific run instance
             resource_manager.mine_organizational_model(df)
 
-            # Save capabilities for metrics.py (Only needs to happen once since the training df is the same)
-            if not ORG_CONTEXT["capacities"]:
-                ORG_CONTEXT["capacities"] = resource_manager.daily_effort_capacities
-                ORG_CONTEXT["system_resources"] = resource_manager.system_resources
-                ORG_CONTEXT["automation_eligible_activities"] = {
-                    act for act, role_ids in resource_manager.activity_permissions.items()
-                    if -1 in role_ids
-                }
-
-            # 2 Setup distinct output log name
             output_log_name = f"{eval_log_dir_name}/{method_name}_run_{run_index}.csv"
 
-            # Initialize Engine
-            # evaluation behavior is handled in this script via clean-and-aggregate steps,
-            # not through a dedicated SimulationEngine evaluation flag.
             engine = SimulationEngine(
                 net=net,
                 initial_marking=initial_marking,
@@ -133,39 +142,29 @@ def run_sims_for_evaluations():
                 evaluation_flag=True,
             )
 
-            # 3. OVERWRITE the internally generated arrivals with global list
-            # We use deepcopy so if the engine modifies the list, it doesn't break the next method
             engine.list_of_arrivals = copy.deepcopy(global_arrivals)
 
-            # 4. Run the simulation
             from simulation.main import arrival_generator
-            # The arrival_generator will now sort and use the injected global list
             engine.env.process(arrival_generator(engine, SETTINGS["sim_start"]))
             duration_seconds = (SETTINGS["sim_end"] - SETTINGS["sim_start"]).total_seconds()
 
             print(f"  -> Running {method_name} with {len(engine.list_of_arrivals)} shared arrivals...")
             engine.run(until=duration_seconds)
 
-            # Capture per-run daily_work_seconds for stress ratio metric
             ORG_CONTEXT["daily_work_seconds"] = {
                 res: dict(usage)
                 for res, usage in resource_manager.daily_work_seconds.items()
             }
 
-            # Pass the in-memory metric_records directly to the cleaner
             clean_and_save_records(engine.metric_records, method_name, run_index)
 
-
 def clean_and_save_records(records_list, method_name, run_index):
-    """Converts engine records to DataFrame, truncates warm-up, and saves."""
     try:
         if not records_list:
             print(f"    WARNING: No metric records captured for {method_name}!")
             return
 
         df = pd.DataFrame(records_list)
-
-        # Group by case to find the exact arrival time of each case
         case_starts = df.groupby('case')['arrival_seconds'].min().reset_index()
         case_starts = case_starts.sort_values(by='arrival_seconds')
 
@@ -173,14 +172,11 @@ def clean_and_save_records(records_list, method_name, run_index):
         eval_cases = SETTINGS["evaluation_cases"]
 
         if len(case_starts) < (warm_up + eval_cases):
-            print(
-                f"    WARNING: Not enough cases generated! Only got {len(case_starts)}. Metrics will be skewed. Increase sim_end.")
-            # We still extract what we have so it doesn't crash
+            print(f"    WARNING: Not enough cases generated! Only got {len(case_starts)}. Metrics will be skewed.")
             valid_case_ids = case_starts.iloc[warm_up:]['case']
         else:
             valid_case_ids = case_starts.iloc[warm_up: warm_up + eval_cases]['case']
 
-        # Filter the DataFrame to ONLY include the valid steady-state cases
         final_df = df[df['case'].isin(valid_case_ids)]
 
         clean_path = Path(f"{eval_log_dir_name}/{method_name}_run_{run_index}_CLEAN.csv")
@@ -190,7 +186,6 @@ def clean_and_save_records(records_list, method_name, run_index):
     except Exception as e:
         print(f"    Error cleaning records: {e}")
 
-
 def compute_and_aggregate_results():
     print("\n" + "=" * 50)
     print("CALCULATING FINAL OPTIMIZATION METRICS (ALL 11)")
@@ -198,7 +193,7 @@ def compute_and_aggregate_results():
 
     final_report_data = []
 
-    for method_name in STRATEGIES.keys():
+    for method_name in METHODS:
         run_metrics = []
 
         for run_index in range(SETTINGS["runs_per_method"]):
@@ -236,12 +231,7 @@ def compute_and_aggregate_results():
     else:
         print("\nFAILED: No data could be processed.")
 
-
 if __name__ == "__main__":
-    # Ensure the eval_logs directory exists before running
     Path(f"{eval_log_dir_name}").mkdir(exist_ok=True)
     run_sims_for_evaluations()
     compute_and_aggregate_results()
-
-
-

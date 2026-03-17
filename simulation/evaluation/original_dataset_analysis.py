@@ -1,14 +1,37 @@
 import pm4py
 import pandas as pd
+from pathlib import Path
 
 # 1. Load the real historical data
 print("Loading event log...")
-log = pm4py.read_xes(r"C:\Users\kickb\OneDrive\Escritorio\bppo-proj2\data\bpi-chall.xes")
+log_dir = Path(__file__).parent.parent.parent
+log_path = str(log_dir / "data" / "bpi-chall.xes")
+log = pm4py.read_xes(str(log_path))
 df = pm4py.convert_to_dataframe(log)
 
+    
 # 2. Standardize timestamp and lifecycle columns
 df['time:timestamp'] = pd.to_datetime(df['time:timestamp'], utc=True)
 df['lifecycle:transition'] = df['lifecycle:transition'].str.lower()
+
+skip = True
+    # Calculate the number of events and incoming cases per month
+if skip: 
+    
+    
+    df['month'] = pd.DatetimeIndex(df['time:timestamp']).month
+    counts_df = df.groupby(df['month']).count()
+
+    monthly_arrivals = df.groupby('month')['case:concept:name'].nunique().reset_index()
+    top_months = monthly_arrivals.sort_values(by='case:concept:name', ascending=False)
+
+    print(counts_df)
+    print(top_months.head(3))
+
+    exit 
+        
+        
+        
 
 # 3. Isolate 'start' and 'complete' events
 starts = df[df['lifecycle:transition'] == 'start'].copy()

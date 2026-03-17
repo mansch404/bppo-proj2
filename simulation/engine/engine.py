@@ -1,6 +1,22 @@
 """
-Simulation Engine Module
-Core discrete event simulation engine using Petri Net semantics
+Discrete-Event Simulation Engine
+
+Central orchestrator for a business process simulation built on Petri net
+semantics and the SimPy discrete-event framework. This module does not
+implement domain logic directly; instead it delegates to external modules
+for instance spawning, processing-time estimation, routing/branching
+decisions, and resource allocation.
+
+Key responsibilities:
+  - Managing Petri net token flow (markings, enabled transitions, firing).
+  - Spawning and executing process instances (cases) over simulated time.
+  - Coordinating with a resource manager to model staff availability and
+    queueing behaviour.
+  - Selecting transitions via pluggable branching strategies (none, basic,
+    advanced).
+  - Computing activity durations through either fitted statistical
+    distributions or a quantile-regression model.
+  - Emitting start/complete lifecycle events to the event logger.
 """
 
 import simpy
@@ -11,15 +27,12 @@ import math
 from pm4py.objects.petri_net.obj import PetriNet, Marking
 from datetime import datetime, timedelta
 from scipy import stats
-
 from .logger import EventLogger
-
 from ..routing.branching_basic import BranchingBasic
 from ..routing.branching_advanced import BranchingAdvanced
 from ..spawner.dynamic_spawner import DynamicSpawner_KDE
 from ..spawner.static_distribution import StaticSpawner
 
-# Import inference functions from advanced_processing_time module
 try:
     from ..timing.advanced_processing_time import (
         predict_processing_time_distribution,
@@ -33,6 +46,60 @@ except ImportError:
 
 
 class SimulationEngine:
+    """Core simulation engine that replays a business process over a Petri net.
+
+    The engine advances a SimPy environment through simulated time while
+    moving tokens through a Petri net that represents the process model.
+    For each process instance (case) it:
+
+      1. Initialises a marking from the Petri net's start place.
+      2. Iteratively determines enabled transitions, selects one (via the
+         configured branching strategy), fires it, and updates the marking.
+      3. Delegates processing-time calculation to either a basic fitted-
+         distribution sampler or an advanced quantile-regression model.
+      4. Requests and waits for a resource through the attached resource
+         manager (or falls back to a static pool).
+      5. Logs start and complete events for every visible activity.
+
+    Args:
+        net: PM4Py Petri net defining the process structure.
+        initial_marking: Token placement at the start of every case.
+        final_marking: Token placement that signals case completion.
+        event_log_path: Destination CSV path for the simulated event log.
+        fitted_distributions_path: Pickle file mapping activity names to
+            fitted scipy distributions (used in basic mode).
+        quantile_models_path: Pickle file containing trained quantile-
+            regression models (used in advanced mode).
+        use_advanced_model: If True, use quantile-regression models for
+            processing-time estimation instead of fitted distributions.
+        branching_mode: Transition selection strategy -- one of "none"
+            (uniform random), "basic" (label-level probabilities), or
+            "advanced" (marking-aware classifier).
+        branching_model_path: Path to a pickled branching model. If None
+            and ``original_log_path`` is provided, a model is fitted on
+            the fly.
+        case_attributes: Default attribute dict attached to every new case
+            (e.g. RequestedAmount, LoanGoal).
+        simulation_start_datetime: Real-world timestamp corresponding to
+            SimPy time 0. Defaults to 2016-01-04 08:00.
+        simulation_end_datetime: Cutoff datetime after which no new cases
+            are spawned. Defaults to 2016-06-04 20:00.
+        original_log_path: Path to the original event log (XES/CSV) used
+            to fit spawner and branching models when no pre-trained model
+            is supplied.
+        resource_manager: External resource-allocation component. When
+            provided, the engine delegates all resource requests to it;
+            otherwise a simple random fallback pool is used.
+        spawner: (Reserved) Pre-configured spawner instance.
+        spawner_advanced: If True, use KDE-based dynamic inter-arrival
+            times; otherwise use a static distribution spawner.
+        list_of_arrivals: Pre-generated list of case arrival datetimes
+            (used primarily in evaluation mode).
+        evaluation_flag: If True, the engine expects arrivals to be
+            injected externally (e.g. by an evaluation harness) rather
+            than generating them internally.
+    """
+
     def __init__(
         self,
         net: PetriNet,
@@ -42,17 +109,17 @@ class SimulationEngine:
         fitted_distributions_path: str = "fitted_distributions.pkl",
         quantile_models_path: str = None,
         use_advanced_model: bool = False,
-        branching_mode: str = "none",  # <--- NEW ARGUMENT
-        branching_model_path: str = None,  # <--- NEW ARGUMENT
+        branching_mode: str = "none",
+        branching_model_path: str = None,
         case_attributes: Dict = None,
         simulation_start_datetime: datetime = None,
-        simulation_end_datetime: datetime = None,  # <--- New argument
+        simulation_end_datetime: datetime = None,
         original_log_path: str = "",
-        resource_manager=None,  # <--- NEW ARGUMENT
-        spawner=None,  # <--- New argument
-        spawner_advanced: bool = False,  # <--- New argument
-        list_of_arrivals=None,  # <--- New argument
-        evaluation_flag: bool = False
+        resource_manager=None,
+        spawner=None,
+        spawner_advanced: bool = False,
+        list_of_arrivals=None,
+        evaluation_flag: bool = False,
     ):
         self.env = simpy.Environment()
         self.net = net
@@ -66,10 +133,10 @@ class SimulationEngine:
 
         self.resource_manager = resource_manager
 
-        # Fallback if no manager provided (simple list)
+        # Static fallback pool used when no resource manager is attached.
         self.fallback_resources = ["System", "User_1", "User_2", "User_3", "Manager"]
 
-        # Default to Monday 2016-01-04 08:00
+        # Anchor simulated time to a real-world calendar timestamp.
         self.simulation_start_datetime = simulation_start_datetime or datetime(
             2016, 1, 4, 8, 0, 0
         )
@@ -80,14 +147,14 @@ class SimulationEngine:
 
         self.use_advanced_model = use_advanced_model
 
-        # Spawner (Task 1.2)
-        self.spawner_advanced = spawner_advanced  # True if advanced approach
+        # --- Instance spawner configuration ---
+        self.spawner_advanced = spawner_advanced
 
-        self.evaluation_flag = evaluation_flag  # True if running in evaluation mode
+        self.evaluation_flag = evaluation_flag
         if self.evaluation_flag:
-            # Empty list filled in evaluation script
+            # In evaluation mode arrivals are injected by the external harness.
             self.list_of_arrivals = []
-            
+
         else:
             if self.spawner_advanced:
                 self.spawner = DynamicSpawner_KDE()
@@ -95,24 +162,22 @@ class SimulationEngine:
             else:
                 self.spawner = StaticSpawner()
                 self.spawner.fit_with_log_path(original_log_path)
-            # Normal run: Generate a list of arrivals (as datetimes) for the simulation
+            # Generate the full arrival schedule for the simulation window.
             self.list_of_arrivals = self.spawner.generate_arrivals(
                 self.simulation_start_datetime, self.simulation_end_datetime
             )
-            
 
-        # Branching (Task 1.4)
-        # branching_mode: "none" | "basic" | "advanced"
+        # --- Branching / routing strategy ---
         self.branching_mode = (branching_mode or "none").lower()
         self.branching_model = None
 
         if self.branching_mode in {"basic", "advanced"}:
             if branching_model_path:
-                # Expect a pickled BranchingBasic / BranchingAdvanced instance
+                # Load a pre-trained branching model from disk.
                 with open(branching_model_path, "rb") as f:
                     self.branching_model = pickle.load(f)
             elif original_log_path:
-                # Fit directly from the original log (XES/CSV)
+                # No saved model -- fit one from the original event log.
                 if self.branching_mode == "basic":
                     self.branching_model = BranchingBasic().fit_from_event_log(
                         original_log_path
@@ -138,7 +203,6 @@ class SimulationEngine:
                 quantile_models_path = "quantile_models.pkl"
             self.quantile_models = self._load_advanced_model(quantile_models_path)
 
-        # Debug info
         print(f"\nSimulation Engine initialized:")
         print(f"  Places: {len(net.places)}")
         print(f"  Transitions: {len(net.transitions)}")
@@ -147,10 +211,16 @@ class SimulationEngine:
         )
         print(f"  Resource Manager attached: {self.resource_manager is not None}")
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
     def _get_current_datetime(self) -> datetime:
+        """Convert the current SimPy clock value to an absolute datetime."""
         return self.simulation_start_datetime + timedelta(seconds=self.env.now)
 
     def _load_basic_distributions(self, filepath: str) -> Dict:
+        """Load per-activity fitted distribution parameters from a pickle file."""
         try:
             with open(filepath, "rb") as f:
                 return pickle.load(f)
@@ -159,6 +229,7 @@ class SimulationEngine:
             return {}
 
     def _load_advanced_model(self, filepath: str) -> Optional[Dict]:
+        """Load quantile-regression models; disable advanced mode on failure."""
         try:
             return load_quantile_models(filepath)
         except Exception as e:
@@ -167,12 +238,27 @@ class SimulationEngine:
             return None
 
     def _marking_to_dict(self, marking: Marking) -> Dict:
+        """Convert a PM4Py Marking to a plain ``{place_name: token_count}`` dict."""
         return {place.name: tokens for place, tokens in marking.items()}
 
     def _markings_equal(self, m1: Marking, m2: Marking) -> bool:
+        """Check structural equality of two markings by comparing their dict forms."""
         return self._marking_to_dict(m1) == self._marking_to_dict(m2)
 
+    # ------------------------------------------------------------------
+    # Instance lifecycle
+    # ------------------------------------------------------------------
+
     def spawn_instance(self, case_attributes: Dict = None):
+        """Create a new process instance and schedule its execution.
+
+        Increments the global case counter, merges any per-case attributes
+        with the defaults, and registers the ``execute_instance`` coroutine
+        with the SimPy environment.
+
+        Returns:
+            The generated case identifier string (e.g. ``"case_42"``).
+        """
         self.case_counter += 1
         case_id = f"case_{self.case_counter}"
 
@@ -184,10 +270,23 @@ class SimulationEngine:
         return case_id
 
     def spawn_at_time(self, delay: float, case_attributes: Dict = None):
+        """SimPy process that waits ``delay`` seconds then spawns a case."""
         yield self.env.timeout(delay)
         self.spawn_instance(case_attributes)
 
     def execute_instance(self, case_id: str, case_attributes: Dict):
+        """Main SimPy process driving a single case through the Petri net.
+
+        Starting from the initial marking, the method repeatedly:
+          1. Identifies enabled transitions.
+          2. Selects one via ``choose_transition``.
+          3. Fires it (logging events, waiting for resources, simulating
+             work) via ``fire_transition``.
+          4. Advances the marking via ``update_marking``.
+
+        The loop terminates when the marking equals the final marking or
+        a safety limit (1 000 iterations / deadlock) is reached.
+        """
         marking = Marking()
         for place, tokens in self.initial_marking.items():
             marking[place] = tokens
@@ -197,7 +296,7 @@ class SimulationEngine:
             "case_start_time": self.env.now,
             "previous_activity": "START",
             "event_nr": 0,
-            "history": [],  # <-- New Context
+            "history": [],
             "case_attributes": case_attributes,
             "offer_info": {
                 "CreditScore": None,
@@ -223,14 +322,18 @@ class SimulationEngine:
                 enabled, marking=marking, case_context=case_context
             )
 
-            # --- CHANGE: Process the transition logic inside fire_transition ---
             yield self.env.process(
                 self.fire_transition(case_id, transition, case_context)
             )
 
             marking = self.update_marking(transition, marking)
 
+    # ------------------------------------------------------------------
+    # Petri net mechanics
+    # ------------------------------------------------------------------
+
     def get_enabled_transitions(self, marking: Marking) -> Set[PetriNet.Transition]:
+        """Return the set of transitions whose input places hold enough tokens."""
         enabled = set()
         for transition in self.net.transitions:
             if self.is_enabled(transition, marking):
@@ -238,6 +341,7 @@ class SimulationEngine:
         return enabled
 
     def is_enabled(self, transition: PetriNet.Transition, marking: Marking) -> bool:
+        """Check whether every input arc of ``transition`` is satisfied by ``marking``."""
         for arc in transition.in_arcs:
             place = arc.source
             required = arc.weight if hasattr(arc, "weight") else 1
@@ -252,35 +356,41 @@ class SimulationEngine:
         marking: Optional[Marking] = None,
         case_context: Optional[Dict] = None,
     ) -> PetriNet.Transition:
-        """
-        Select which enabled transition to fire
+        """Select which enabled transition to fire next.
 
-        Default: random choice
+        The selection strategy depends on the configured branching mode:
 
-        If a branching model is configured (Task 1.4), we only intervene when:
-        - at least two visible transitions (label not empty) are enabled,
-        - and we have a trace history in case_context.
+        - **none**: Uniform random choice among visible transitions.
+        - **basic**: The branching model predicts the next activity label
+          from the case history, then the corresponding transition is
+          selected. Falls back to uniform random on error.
+        - **advanced**: The branching model receives the current marking
+          and history and returns a transition directly. Falls back to
+          uniform random on error.
 
-        Silent transitions (label None/"") are treated as routing and are only
-        chosen if no visible transition is enabled.
+        Silent (unlabelled) transitions are treated as internal routing
+        and are only chosen when no visible transition is enabled.
+
+        Raises:
+            ValueError: If ``enabled`` is empty.
         """
         enabled_list = list(enabled)
         if not enabled_list:
             raise ValueError("enabled must be non-empty")
 
-        # Separate visible and silent transitions
+        # Partition into visible (labelled) and silent (routing) transitions.
         visible = [t for t in enabled_list if t.label not in (None, "")]
         silent = [t for t in enabled_list if t.label in (None, "")]
 
-        # If only routing is possible, keep prior behavior
+        # Only routing transitions available -- pick one at random.
         if not visible:
             return random.choice(silent) if silent else random.choice(enabled_list)
 
-        # If only one visible transition is possible, it is forced
+        # Single visible transition -- deterministic, no choice needed.
         if len(visible) == 1:
             return visible[0]
 
-        # If no branching model configured, keep random behavior among visible
+        # No branching model -- fall back to uniform random.
         if self.branching_model is None or self.branching_mode == "none":
             return random.choice(visible)
 
@@ -288,7 +398,7 @@ class SimulationEngine:
         if case_context and "history" in case_context:
             history = list(case_context["history"])
 
-        # Advanced: model chooses transition directly, using marking signatures
+        # --- Advanced branching: marking-aware classifier ---
         if (
             self.branching_mode == "advanced"
             and marking is not None
@@ -304,7 +414,7 @@ class SimulationEngine:
             except Exception:
                 return random.choice(visible)
 
-        # Basic: model chooses next activity label, then map to a transition
+        # --- Basic branching: history-based label prediction ---
         if self.branching_mode == "basic" and hasattr(
             self.branching_model, "choose_next"
         ):
@@ -324,20 +434,38 @@ class SimulationEngine:
 
         return random.choice(visible)
 
+    # ------------------------------------------------------------------
+    # Transition firing (activity execution)
+    # ------------------------------------------------------------------
+
     def fire_transition(
         self, case_id: str, transition: PetriNet.Transition, case_context: Dict
     ):
-        # 1. Handle Silent Transitions
+        """SimPy process that executes a single transition firing.
+
+        For silent transitions the method yields immediately with zero
+        delay. For visible (labelled) transitions the sequence is:
+
+          1. Compute the processing time (basic or advanced model).
+          2. Request a resource from the resource manager, retrying at a
+             configurable interval until one becomes available.
+          3. Log a *start* lifecycle event.
+          4. Yield for the computed service duration (simulating work).
+          5. Log a *complete* lifecycle event.
+          6. Update case context (previous activity, event counter, and
+             domain-specific offer information where applicable).
+        """
+        # Silent transitions carry no activity -- skip immediately.
         if transition.label is None or transition.label == "":
             yield self.env.timeout(0)
             return
 
         activity_name = transition.label
 
-        # Update history for branching
+        # Append to the case trace so branching models can use history.
         case_context.setdefault("history", []).append(activity_name)
 
-        # 2. Calculate Processing Time FIRST (needed to book the resource)
+        # Step 1: Determine how long this activity will take.
         if self.use_advanced_model and self.quantile_models is not None:
             processing_time = self._get_processing_time_advanced(
                 activity_name, case_context
@@ -345,39 +473,35 @@ class SimulationEngine:
         else:
             processing_time = self._get_processing_time_basic(activity_name)
 
-        # 3. Request Resource (Wait if busy/unavailable)
+        # Step 2: Acquire a resource (blocks until one is available).
         resource = None
         arrival_seconds = float(self.env.now)
 
         if self.resource_manager:
-            # Loop until we get a resource (Queueing behavior)
             while resource is None:
-                # Ask manager: "Can anyone do 'activity_name' right now?"
                 resource = self.resource_manager.request_resource(
                     activity=activity_name,
                     sim_time=self.env.now,
                     duration=processing_time,
-                    case_id=case_id,  # important for CaseHandlingPlanner
-                    amount=case_context["case_attributes"].get(
-                        "RequestedAmount", 0
-                    ),  # for Advanced Matcher
+                    case_id=case_id,
+                    amount=case_context["case_attributes"].get("RequestedAmount", 0),
                 )
 
                 if resource is None:
-                    # No one available (night time, or all busy)
-                    # Wait 15 minutes (900 seconds) and check again
+                    # No resource available -- wait and retry.
                     retry_interval = getattr(
                         self.resource_manager, "retry_interval", 900
                     )
                     yield self.env.timeout(retry_interval)
         else:
-            # Fallback if no manager (old behavior)
             resource = random.choice(self.fallback_resources)
 
         start_seconds = float(self.env.now)
         wait_seconds = max(0.0, float(start_seconds - arrival_seconds))
 
-        # Busy-until is the source of truth for allocation duration in the resource manager.
+        # Derive actual service duration from the resource manager's
+        # busy-until timestamp when available; otherwise use the raw
+        # processing time estimate.
         end_seconds = None
         if self.resource_manager:
             busy_until = self.resource_manager.busy_until.get(resource)
@@ -395,6 +519,7 @@ class SimulationEngine:
             and resource in getattr(self.resource_manager, "system_resources", set())
         ) or (resource == "System")
 
+        # Record per-activity metrics for downstream evaluation.
         self.metric_records.append(
             {
                 "case": case_id,
@@ -413,7 +538,7 @@ class SimulationEngine:
             }
         )
 
-        # 4. Log Start
+        # Step 3: Log the activity start event.
         self.event_logger.log_event(
             case_id=case_id,
             activity=activity_name,
@@ -422,10 +547,10 @@ class SimulationEngine:
             resource=resource,
         )
 
-        # 5. Simulate Work
+        # Step 4: Simulate the activity's service duration.
         yield self.env.timeout(service_seconds)
 
-        # 6. Log Completion
+        # Step 5: Log the activity completion event.
         self.event_logger.log_event(
             case_id=case_id,
             activity=activity_name,
@@ -437,7 +562,7 @@ class SimulationEngine:
         case_context["previous_activity"] = activity_name
         case_context["event_nr"] += 1
 
-        # Simulate offer info logic
+        # Populate synthetic offer details on the first "O_Create Offer" event.
         if (
             activity_name == "O_Create Offer"
             and case_context["offer_info"]["CreditScore"] is None
@@ -453,6 +578,12 @@ class SimulationEngine:
     def update_marking(
         self, transition: PetriNet.Transition, marking: Marking
     ) -> Marking:
+        """Apply a transition's token effects and return the new marking.
+
+        Consumes tokens from each input place and produces tokens in each
+        output place according to the arc weights defined in the Petri net.
+        Places whose token count drops to zero are removed from the marking.
+        """
         new_marking = Marking()
         for place, tokens in marking.items():
             new_marking[place] = tokens
@@ -474,7 +605,17 @@ class SimulationEngine:
 
         return new_marking
 
+    # ------------------------------------------------------------------
+    # Processing-time estimation
+    # ------------------------------------------------------------------
+
     def _get_processing_time_basic(self, activity: str) -> float:
+        """Sample a processing time from the activity's fitted distribution.
+
+        Falls back to a fixed 10-second default when the activity has no
+        fitted distribution or sampling fails. The result is clamped to a
+        minimum of 0.01 seconds to avoid zero-duration events.
+        """
         if activity not in self.fitted_distributions:
             return 10.0
 
@@ -503,6 +644,16 @@ class SimulationEngine:
             return 10.0
 
     def _get_processing_time_advanced(self, activity: str, case_context: Dict) -> float:
+        """Predict processing time using the quantile-regression model.
+
+        Builds a feature vector from the current simulation state (time of
+        day, day of week, elapsed case time, case attributes, and offer
+        details), passes it to the quantile-regression predictor, and
+        samples a duration from the predicted quantile distribution.
+
+        Falls back to ``_get_processing_time_basic`` on any prediction
+        error.
+        """
         current_datetime = self._get_current_datetime()
         hour_of_day = current_datetime.hour
         day_of_week = current_datetime.weekday()
@@ -531,7 +682,16 @@ class SimulationEngine:
         except Exception:
             return self._get_processing_time_basic(activity)
 
+    # ------------------------------------------------------------------
+    # Simulation entry point
+    # ------------------------------------------------------------------
+
     def run(self, until: float):
+        """Execute the simulation up to the given SimPy time limit.
+
+        After the SimPy environment finishes, the accumulated event log
+        is flushed to CSV.
+        """
         print(f"\nStarting simulation (until t={until})...")
         print(
             f"  Simulation datetime range: {self.simulation_start_datetime} to {self.simulation_start_datetime + timedelta(seconds=until)}"

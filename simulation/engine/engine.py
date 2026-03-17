@@ -22,6 +22,7 @@ Key responsibilities:
 import simpy
 import random
 import pickle
+import numpy as np
 from typing import Set, Dict, Optional
 import math
 from pm4py.objects.petri_net.obj import PetriNet, Marking
@@ -196,6 +197,19 @@ class SimulationEngine:
         self.fitted_distributions = self._load_basic_distributions(
             fitted_distributions_path
         )
+
+        # Compute a data-driven fallback from the median of all fitted distribution medians
+        if self.fitted_distributions:
+            medians = []
+            for info in self.fitted_distributions.values():
+                try:
+                    dist = getattr(stats, info["distribution"])
+                    medians.append(float(dist.median(*info["params"])))
+                except Exception:
+                    continue
+            self.global_fallback_time = float(np.median(medians)) if medians else 10.0
+        else:
+            self.global_fallback_time = 10.0
 
         self.quantile_models = None
         if use_advanced_model:
@@ -612,12 +626,12 @@ class SimulationEngine:
     def _get_processing_time_basic(self, activity: str) -> float:
         """Sample a processing time from the activity's fitted distribution.
 
-        Falls back to a fixed 10-second default when the activity has no
+        Falls back to a dynamically computed default when the activity has no
         fitted distribution or sampling fails. The result is clamped to a
         minimum of 0.01 seconds to avoid zero-duration events.
         """
         if activity not in self.fitted_distributions:
-            return 10.0
+            return self.global_fallback_time
 
         info = self.fitted_distributions[activity]
         dist_name = info["distribution"]
@@ -637,11 +651,11 @@ class SimulationEngine:
                 loc, scale = params
                 sample = stats.norm.rvs(loc, scale)
             else:
-                sample = 10.0
+                sample = self.global_fallback_time
             return max(0.01, sample)
         except Exception as e:
             # print(f"Error sampling for {activity}: {e}")
-            return 10.0
+            return self.global_fallback_time
 
     def _get_processing_time_advanced(self, activity: str, case_context: Dict) -> float:
         """Predict processing time using the quantile-regression model.

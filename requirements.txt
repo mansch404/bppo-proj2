@@ -1,1 +1,14 @@
-simpy~=4.1.1
+# External dependencies
+fitter
+lightgbm
+markdown-it-py
+matplotlib
+numpy
+pandas
+pm4py
+pulp
+pytest
+scikit-learn
+scipy
+simpy
+torch

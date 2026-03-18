@@ -1,0 +1,44 @@
+{
+  "quantiles": [
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    0.9
+  ],
+  "feature_names": [
+    "activity_encoded",
+    "previous_activity_encoded",
+    "LoanGoal_encoded",
+    "ApplicationType_encoded",
+    "day_of_week_encoded",
+    "RequestedAmount",
+    "event_nr",
+    "elapsed_time",
+    "hour_of_day",
+    "CreditScore",
+    "OfferedAmount",
+    "NumberOfTerms",
+    "MonthlyCost"
+  ],
+  "categorical_features": [
+    "activity_encoded",
+    "previous_activity_encoded",
+    "LoanGoal_encoded",
+    "ApplicationType_encoded",
+    "day_of_week_encoded"
+  ],
+  "numerical_features": [
+    "RequestedAmount",
+    "event_nr",
+    "elapsed_time",
+    "hour_of_day",
+    "CreditScore",
+    "OfferedAmount",
+    "NumberOfTerms",
+    "MonthlyCost"
+  ],
+  "use_log_transform": true,
+  "min_processing_time": 1.0,
+  "max_processing_time": 28800.0
+}

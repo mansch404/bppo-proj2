@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest simulation/resource_manager/test_metrics.py -v)",
+      "Bash(python -m pytest simulation/resource_manager/test_heuristic_evaluator.py -v)"
+    ]
+  }
+}

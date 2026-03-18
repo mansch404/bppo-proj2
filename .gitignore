@@ -15,3 +15,6 @@ simulation/spawner/DynamicSpawner2.py
 simulation_log.csv
 BPI Challenge 2017.xes
 optimization.pdf
+eval_logs_1/Basic_ShortestQueue_run_0.csv
+eval_logs_1/Basic_ShortestQueue_run_0_CLEAN.csv
+eval_logs_1

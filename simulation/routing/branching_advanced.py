@@ -302,7 +302,7 @@ class BranchingAdvanced:
                 if chosen not in cls2idx:
                     # This can occur if replay extracted enabled set differs
                     # from the key's enabled set. Skip defensively.
-                    continueڍ
+                    continue
                 X.append(x)
                 y.append(cls2idx[chosen])
                 empirical_counts[chosen] = empirical_counts.get(chosen, 0) + 1
